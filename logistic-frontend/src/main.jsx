@@ -7,6 +7,8 @@ import App from "./App";
 
 // Подключение стилей
 import "./index.css";
+import "leaflet/dist/leaflet.css";
+import "./leafletIcons";
 
 createRoot(document.getElementById("root")).render(
  <React.StrictMode>
