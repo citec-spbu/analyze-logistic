@@ -1,43 +1,51 @@
 import React from "react";
-import { Link } from "react-router-dom";
 
 export default function Layout({ children }) {
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-            <header style={{
-                background: "0f62fe",
-                color: "#fff",
-                padding: "12px 16px",
-                fontWeight: 700
-            }}>
+        <div style={{ position: "relative", width: "100%", height: "100vh" }}>
+            {/* Верхний блок / header */}
+            <header
+                style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    padding: "12px",
+                    backgroundColor: "rgba(240, 240, 240, 0.8)",
+                    textAlign: "center",
+                    fontWeight: "bold",
+                    zIndex: 1000,
+                }}
+            >
+                🌍 Проект по Анализу Карт
             </header>
 
-            <div style={{ display: "flex", flex: 1 }}>
-                <aside style={{
-                    width: 260,
-                    borderRight: "1px solid #e5e7eb",
-                    padding: 16,
-                    background: "#f8fafc"
-                }}>
-                    <nav>
-                        <ul style={{
-                            listStyle: "none",
-                            padding: 0,
-                            margin: 0,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 8
-                        }}>
-                            <li><Link to="/">Главная</Link></li>
-                            <li><Link to="/analysis">Анализ карты</Link></li>
-                        </ul>
-                    </nav>
-                    </aside>
+            {/* Основная рабочая область */}
+            <main style={{ width: "100%", height: "100%" }}>
+                {children}
+            </main>
 
-                    <main style={{flex:1, padding: 16, overflow: "auto"}}>
-                        {children}
-                    </main>
-                    </div>
-                    </div>
-            );
+            {/* Нижний блок / footer */}
+            <footer
+                style={{
+                    position: "fixed",
+                    bottom: 0,
+                    left: 0,
+                    width: "100%",
+                    padding: "8px",
+                    textAlign: "center",
+                    backgroundColor: "rgba(240,240,240,0.9)",
+                    opacity: 0, // изначально прозрачный
+                    transition: "opacity 0.3s",
+                    zIndex: 1000,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = 0)}
+            >
+                <a href="https://github.com/agalikeev/analyze-logistic" target="_blank" rel="noopener noreferrer">
+                    Ссылка на проект
+                </a>
+            </footer>
+        </div>
+    );
 }

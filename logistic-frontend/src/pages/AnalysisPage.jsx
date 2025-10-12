@@ -2,27 +2,8 @@ import React, { useState } from "react";
 import MapView from "../components/MapView";
 
 export default function AnalysisPage() {
-    // Режим анализа: File - загружаем карту, Map - выбираем участок на карте
-    const [mode, setMode] = useState("file");
-
-    // Состояния для загруженного файла и превью
-    const [file, setFile] = useState(null);
-    const [preview, setPreview] = useState(null);
-
     // Состояние выбранной области
     const [selectedArea, setSelectedArea] = useState(null);
-
-    // Выбор файла
-    const handleFileChange = (event) => {
-        const selectedFile = event.target.files[0];
-        if (!selectedFile) return;
-
-        setFile(selectedFile);
-
-        const reader = new FileReader(); // Читаем файл в памяти браузера
-        reader.onload = (e) => setPreview(e.target.result); // Сохраняем результат в Preview
-        reader.readAsDataURL(selectedFile); // Преобразуем файл  в строку
-    };
 
     function areaToGeoJSON(area) {
         return {
@@ -61,98 +42,66 @@ export default function AnalysisPage() {
 
     // Кнопка "Начать Анализ"
     const handleAnalyze = async () => {
-        if (mode === "file") {
-            if (!file) {
-                alert("Выберите файл для карты!");
-                return;
-            }
-
-            // TODO: Вызов API для анализа
-            console.log("Отправка файла на сервер:", file);
-            alert("Файл отправлен на сервер");
-
-        } else if (mode === "map") {
-            if (!selectedArea) {
-                alert("Выделите участок карты для анализа!");
-                return;
-            }
-
-            // TODO: Логика обработки выделенного участка карты
-            // Создаём GeoJSON-объект из выбранной области
-            const geojson = areaToGeoJSON(selectedArea);
-            console.log("Отправляем GeoJSON:", geojson);
-            await sendGeoJSON(geojson);
+        if (!selectedArea) {
+            alert("Выделите участок карты для анализа!");
+            return;
         }
 
+        // TODO: Логика обработки выделенного участка карты
+        // Создаём GeoJSON-объект из выбранной области
+        const geojson = areaToGeoJSON(selectedArea);
+        console.log("Отправляем GeoJSON:", geojson);
+        await sendGeoJSON(geojson);
     };
 
 
     return (
-        <div>
-            <h1>Анализ Карты</h1>
-            <p> Карта и визуализация Графа</p>
-            <p> Выберите способ анализа</p>
+        <div style={{ position: "relative", flex: 1, width: "100%", height: "100%", minHeight: 0 }}>
 
-            {/* Переключатель режима */}
-            <div style={{ marginBottom: 16 }}>
-                <label>
-                    <input
-                        type="radio"
-                        name="mode"
-                        value="file"
-                        checked={mode === "file"}
-                        onChange={() => setMode("file")}
-                    />
-                    Загрузить файл
-                </label>
-                <label style={{ marginLeft: 16 }}>
-                    <input
-                        type="radio"
-                        name="mode"
-                        value="map"
-                        checked={mode === "map"}
-                        onChange={() => setMode("map")}
-                    />
-                    Использовать карту
-                </label>
-            </div>
+            {/* Карта */}
+            <MapView onAreaSelect={setSelectedArea} />
 
-            {/* Блок загрузки файла */}
-            {mode === "file" && (
-                <div>
-                    <div style={{ marginBottom: 16 }}>
-                        <input type="file" accept="image/*" onChange={handleFileChange} />
-                    </div>
-                    {/* Превью карты */}
-                    {file && (
-                        <div>
-                            <p>Выбран файл: {file.name}</p>
-                            {preview && (
-                                <img
-                                    src={preview}
-                                    alt="Превью карты"
-                                    style={{ maxWidth: "100%", maxHeight: 300, border: "1px solid #ccc", }} />
-                            )}
-                        </div>
-                    )}
-                </div>
+            {/* Кнопка поверх карты */}
+            {selectedArea && (
+                <button
+                    onClick={handleAnalyze}
+                    style={{
+                        position: "absolute",
+                        bottom: "40px",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        backgroundColor: "#0f62fe",
+                        color: "white",
+                        padding: "10px 20px",
+                        border: "none",
+                        borderRadius: "8px",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+                        zIndex: 1000,
+                    }}
+                >
+                    Начать анализ
+                </button>
             )}
 
-            {/* Блок выбора Leaflet карты */}
-            {mode === "map" && (
-                <div style={{ marginBottom: 16 }}>
-                    <h2>Карта региона</h2>
-                    <MapView onAreaSelect={setSelectedArea} />
-                    {selectedArea && (
-                        <p style={{ color: "green" }}>
-                            ✅ Область выбрана
-                        </p>
-                    )}
+            {/* Информация о выбранной области */}
+            {selectedArea && (
+                <div style={{
+                    position: "absolute",
+                    top: "60px",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    backgroundColor: "rgba(255, 255, 255, 0.9)",
+                    padding: "6px 12px",
+                    borderRadius: "6px",
+                    zIndex: 1000,
+                    fontWeight: "bold",
+                }}>
+                    ✅ Область выбрана
                 </div>
             )}
-
-            {/* Кнопка запуска анализа */}
-            <button onClick={handleAnalyze}>Начать Анализ</button>
         </div>
     );
+
 }

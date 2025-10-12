@@ -6,7 +6,6 @@ import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 import Layout from "./layout/Layout";
 
 // Страницы
-import HomePage from "./pages/HomePage";
 import AnalysisPage from "./pages/AnalysisPage";
 
 export default function App() {
@@ -14,10 +13,10 @@ export default function App() {
         <Router>
             <Layout>
                 <Routes>
-                    <Route path="/" element={<HomePage />} />
+                    <Route path="/" element={<AnalysisPage />} />
                     <Route path="/analysis" element={<AnalysisPage />} />
                 </Routes>
             </Layout>
         </Router>
-    )
+    );
 }

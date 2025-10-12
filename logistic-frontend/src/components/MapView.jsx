@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { MapContainer, Marker, Polygon, TileLayer, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Polygon, TileLayer, useMapEvents, ZoomControl } from "react-leaflet";
 
 // Компонент выделения области на карте
 function SelectArea({ onChange }) {
@@ -55,13 +55,21 @@ function SelectArea({ onChange }) {
 // По умолчанию стоят координаты ПМПУ
 export default function MapView({ center = [59.882036, 29.829662], zoom = 17, onAreaSelect }) {
     return (
-        <div style={{ width: "100%", height: "500px" }}>
-            <MapContainer center={center} zoom={zoom} style={{ width: "100%", height: "100%" }}>
-                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    attribution='&copy; OpenStreetMap contributors' />
-                {/* Компонент выделения области */}
-                <SelectArea onChange={onAreaSelect} />
-            </MapContainer>
-        </div>
+        <MapContainer
+            center={center}
+            zoom={zoom}
+            style={{
+                width: "100%",
+                height: "100vh",
+            }}
+            zoomControl={false}
+        >
+            <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; OpenStreetMap contributors'
+            />
+            {/* Компонент выделения области */}
+            <SelectArea onChange={onAreaSelect} />
+        </MapContainer>
     );
 }
