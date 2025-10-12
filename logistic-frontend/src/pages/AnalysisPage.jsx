@@ -1,9 +1,38 @@
 import React, { useState } from "react";
+import Layout from "../layout/Layout";
 import MapView from "../components/MapView";
 
 export default function AnalysisPage() {
     // Состояние выбранной области
     const [selectedArea, setSelectedArea] = useState(null);
+    const [point1, setPoint1] = useState("");
+    const [point2, setPoint2] = useState("");
+
+    const sidebarContent = (
+        <>
+            <h3 style={{ marginTop: 0, marginBottom: "16px" }}>📍 Ввод координат</h3>
+            <label>
+                Точка 1 (lat,lng):
+                <input
+                    type="text"
+                    placeholder="59.88,29.82"
+                    value={point1}
+                    onChange={(e) => setPoint1(e.target.value)}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #ccc" }}
+                />
+            </label>
+            <label>
+                Точка 2 (lat,lng):
+                <input
+                    type="text"
+                    placeholder="59.88,29.83"
+                    value={point2}
+                    onChange={(e) => setPoint2(e.target.value)}
+                    style={{ width: "100%", marginTop: "4px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #ccc" }}
+                />
+            </label>
+        </>
+    );
 
     function areaToGeoJSON(area) {
         return {
@@ -58,8 +87,17 @@ export default function AnalysisPage() {
     return (
         <div style={{ position: "relative", flex: 1, width: "100%", height: "100%", minHeight: 0 }}>
 
-            {/* Карта */}
-            <MapView onAreaSelect={setSelectedArea} />
+            <Layout sidebarContent={sidebarContent}>
+
+                {/* Карта */}
+                <MapView
+                    onAreaSelect={setSelectedArea}
+                    point1={point1}
+                    point2={point2}
+                    setPoint1={setPoint1}
+                    setPoint2={setPoint2}
+                />
+            </Layout>
 
             {/* Кнопка поверх карты */}
             {selectedArea && (
