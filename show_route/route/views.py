@@ -1,5 +1,5 @@
 import folium
-from django.shortcuts import render,redirect
+from django.shortcuts import render, redirect
 
 
 def showmap(request):
@@ -23,7 +23,7 @@ ox.settings.bidirectional_network_types = ["drive"]
 tags_port = {'industrial' : 'port'}
 tags_aeroway = {'aeroway' : ['aerodrome','heliport', 'airstrip']}
 tags_landuse = {'landuse' : 'railway'}
-tags_build = {'building' : 'warehouse', 'amenity' : 'mailroom'}
+# tags_build = {'building' : 'warehouse', 'amenity' : 'mailroom'}
 
 ''' Построение датафрейма нужных фич '''
 def func_tags(m_tags, point_y, point_x):
@@ -42,7 +42,7 @@ def func_tags(m_tags, point_y, point_x):
             except KeyError:
                 list_lat_lon.append(pd.DataFrame({'lat': [None], 'lon': [None]}))
         dfs = pd.concat(list_lat_lon, axis=0).reset_index(drop=True)
-        gdf = gdf.merge(dfs, on=dfs.index).drop('key_0', axis=1)
+        gdf = gdf.join(dfs, how='inner')
         gdf = gdf[['lat', 'lon']]
         gdf['kind_of'] = list(m_tags.keys())[0]
         gdf = gdf.dropna().reset_index(drop=True)
@@ -53,10 +53,13 @@ def func_tags(m_tags, point_y, point_x):
 
 ''' Построение графа, получение датафрейма фич и получение датафрейма долгот и широт для дальшейших вычислений '''
 def create_graph_city(point_y, point_x, my_network_type = None, my_filter = None):
+    # full_df = pd.concat([func_tags(tags_port, point_y, point_x), 
+    #                                 func_tags(tags_aeroway, point_y, point_x), 
+    #                                 func_tags(tags_landuse, point_y, point_x), 
+    #                                 func_tags(tags_build, point_y, point_x)], ignore_index=True)
     full_df = pd.concat([func_tags(tags_port, point_y, point_x), 
                                     func_tags(tags_aeroway, point_y, point_x), 
-                                    func_tags(tags_landuse, point_y, point_x), 
-                                    func_tags(tags_build, point_y, point_x)], ignore_index=True)
+                                    func_tags(tags_landuse, point_y, point_x)], ignore_index=True)
     G = ox.graph_from_bbox(bbox = (max(point_y), min(point_y), min(point_x), max(point_x)), 
                            retain_all=True, simplify = True, network_type = my_network_type, custom_filter = my_filter)
 
@@ -203,7 +206,7 @@ def result(point_y, point_x):
     ox.distance.add_edge_lengths(graph_city[1], edges=None)
     route_df = create_graph_route(graph_city[1], feature_df)
     final_graph_1_drive = create_final_graph(graph_city[1], route_df, feature_df)
-    return final_graph_1_drive
+    return final_graph_1_drive, route_df
 
 ''' Построение результирующего графа для морей '''
 def result_marine(point_y, point_x):
@@ -211,8 +214,11 @@ def result_marine(point_y, point_x):
     feature_df = create_features_city(*graph_city)
     ox.distance.add_edge_lengths(graph_city[1], edges=None)
     route_df = create_route_marine(graph_city[1], feature_df)
-    final_graph_1_marine = create_final_graph(graph_city[1], route_df, feature_df)
-    return final_graph_1_marine
+    try:
+    	final_graph_1_marine = create_final_graph(graph_city[1], route_df, feature_df)
+    except IndexError:
+    	final_graph_1_marine = nx.MultiDiGraph()
+    return final_graph_1_marine, route_df
 
 ''' Построение результирующего графа для воздушных путей '''
 def result_aero(point_y, point_x):
@@ -220,8 +226,11 @@ def result_aero(point_y, point_x):
     feature_df = create_features_city(*graph_city)
     ox.distance.add_edge_lengths(graph_city[1], edges=None)
     route_df = create_route_aero(graph_city[1], feature_df)
-    final_graph_1_aero = create_final_graph(graph_city[1], route_df, feature_df)
-    return final_graph_1_aero
+    try:
+    	final_graph_1_aero = create_final_graph(graph_city[1], route_df, feature_df)
+    except IndexError:
+    	final_graph_1_aero = nx.MultiDiGraph()
+    return final_graph_1_aero, route_df
 
 
 def showroutes(request, metrics, lat1, long1, lat2, long2):
@@ -257,9 +266,9 @@ def showroutes(request, metrics, lat1, long1, lat2, long2):
         graph = ox.graph_from_gdfs(df_nodes, df_edges)
     else:
 
-        res_drive = result(point_y, point_x)
-        res_marine = result_marine(point_y, point_x)
-        res_aero = result_aero(point_y, point_x)
+        res_drive, drive_route_df = result(point_y, point_x)
+        res_marine, marine_route_df = result_marine(point_y, point_x)
+        res_aero, aero_route_df = result_aero(point_y, point_x)
         res_railway = ox.graph_from_bbox(bbox = (max(point_y), min(point_y), min(point_x), max(point_x)), 
                            retain_all=True, simplify = True, custom_filter = '["railway"~"rail"]')
     
