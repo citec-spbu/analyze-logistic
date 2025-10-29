@@ -7,6 +7,7 @@ export default function AnalysisPage() {
     const [selectedArea, setSelectedArea] = useState(null);
     const [point1, setPoint1] = useState("");
     const [point2, setPoint2] = useState("");
+    const [selectedMode, setSelectedMode] = useState("auto");
 
     const sidebarContent = (
         <>
@@ -31,10 +32,59 @@ export default function AnalysisPage() {
                     style={{ width: "100%", marginTop: "4px", padding: "6px 8px", borderRadius: "6px", border: "1px solid #ccc" }}
                 />
             </label>
+
+            {/* Блок выбора режима анализа */}
+            <div style={{ marginTop: "20px" }}>
+                <h4 style={{ marginBottom: "8px" }}>🚦 Тип маршрута:</h4>
+
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="auto"
+                        checked={selectedMode === "auto"}
+                        onChange={() => setSelectedMode("auto")}
+                    />{" "}
+                    Автомобильный
+                </label>
+
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="aero"
+                        checked={selectedMode === "aero"}
+                        onChange={() => setSelectedMode("aero")}
+                    />{" "}
+                    Авиамаршрут
+                </label>
+
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="sea"
+                        checked={selectedMode === "sea"}
+                        onChange={() => setSelectedMode("sea")}
+                    />{" "}
+                    Морской маршрут
+                </label>
+
+                <label style={{ display: "block" }}>
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="rail"
+                        checked={selectedMode === "rail"}
+                        onChange={() => setSelectedMode("rail")}
+                    />{" "}
+                    Железнодорожный
+                </label>
+            </div>
         </>
     );
 
-    function areaToGeoJSON(area) {
+    function areaToGeoJSON(area,routemode) {
         return {
             type: "Feature",
             geometry: {
@@ -49,6 +99,7 @@ export default function AnalysisPage() {
             },
             properties: {
                 zoom: area.zoom || null,
+                mode: routemode || "auto",
             }
         };
     }
@@ -78,7 +129,7 @@ export default function AnalysisPage() {
 
         // TODO: Логика обработки выделенного участка карты
         // Создаём GeoJSON-объект из выбранной области
-        const geojson = areaToGeoJSON(selectedArea);
+        const geojson = areaToGeoJSON(selectedArea, selectedMode);
         console.log("Отправляем GeoJSON:", geojson);
         await sendGeoJSON(geojson);
     };

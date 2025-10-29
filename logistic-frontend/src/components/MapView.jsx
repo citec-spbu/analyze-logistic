@@ -93,6 +93,7 @@ export default function MapView({ center = [59.882036, 29.829662], zoom = 17, on
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution=''
             />
+
             {/* Компонент выделения области */}
             <SelectArea
                 onChange={onAreaSelect}
