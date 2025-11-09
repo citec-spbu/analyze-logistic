@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from models.schemas import BoundingBox, MSTResponse, MapResponse
-from services.logistics import LogisticsService
+from fastapi.middleware.cors import CORSMiddleware
+from manage import generate_logistics_mst
 from typing import Optional
 import json
 
@@ -11,8 +12,13 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Инициализация сервиса
-logistics_service = LogisticsService()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Дефолтный bbox для Казани
 DEFAULT_BBOX = (48.8, 55.6, 49.3, 55.9)
@@ -38,37 +44,20 @@ def analyze_logistics_network(
         west: float = Query(DEFAULT_BBOX[0], description="Западная долгота"),
         south: float = Query(DEFAULT_BBOX[1], description="Южная широта"),
         east: float = Query(DEFAULT_BBOX[2], description="Восточная долгота"),
-        north: float = Query(DEFAULT_BBOX[3], description="Северная широта")
+        north: float = Query(DEFAULT_BBOX[3], description="Северная широта"),
+        mode: str = Query("auto", description="Тип маршрута: Авто / Аэро / Морской / ЖД")
 ):
     """
     Анализ логистической сети и построение MST
 
     Возвращает JSON с данными о точках и рёбрах MST
     """
+    bbox = (west, south, east, north)
     try:
-        bbox = (west, south, east, north)
-
-        # Загрузка данных
-        centers_gdf = logistics_service.load_logistics_centers(bbox)
-
-        if centers_gdf.empty:
-            raise HTTPException(
-                status_code=404,
-                detail="Не найдено логистических центров в заданной области"
-            )
-
-        # Извлечение координат
-        coords_df = logistics_service.extract_coordinates(centers_gdf)
-
-        # Построение графа и MST
-        G = logistics_service.build_graph(coords_df)
-        mst = logistics_service.calculate_mst(G)
-
-        # Получение данных
-        mst_data = logistics_service.get_mst_data(coords_df, mst)
-
-        return MSTResponse(**mst_data)
-
+        result = generate_logistics_mst(bbox, mode, cache_dir="cache")
+        if result.get("status") != "ok":
+            raise HTTPException(status_code=404, detail=result.get("message", "Ошибка анализа"))
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -78,54 +67,27 @@ def get_map(
         west: float = Query(DEFAULT_BBOX[0], description="Западная долгота"),
         south: float = Query(DEFAULT_BBOX[1], description="Южная широта"),
         east: float = Query(DEFAULT_BBOX[2], description="Восточная долгота"),
-        north: float = Query(DEFAULT_BBOX[3], description="Северная широта")
+        north: float = Query(DEFAULT_BBOX[3], description="Северная широта"),
+        mode: str = Query("auto")
 ):
     """
     Получить HTML карту с визуализацией MST
 
     Возвращает интерактивную карту Folium
     """
+    bbox = (west, south, east, north)
     try:
-        bbox = (west, south, east, north)
+        result = generate_logistics_mst(bbox, mode, cache_dir="cache")
+        if result.get("status") != "ok":
+            return HTMLResponse(f"<h3>{result.get('message', 'Нет данных')}</h3>", status_code=404)
 
-        # Загрузка данных
-        centers_gdf = logistics_service.load_logistics_centers(bbox)
-
-        if centers_gdf.empty:
-            return HTMLResponse(
-                content="<h1>Не найдено логистических центров в заданной области</h1>",
-                status_code=404
-            )
-
-        # Извлечение координат
-        coords_df = logistics_service.extract_coordinates(centers_gdf)
-
-        # Построение графа и MST
-        G = logistics_service.build_graph(coords_df)
-        mst = logistics_service.calculate_mst(G)
-
-        # Создание карты
-        m = logistics_service.create_map(coords_df, mst, bbox)
-
-        return HTMLResponse(content=m._repr_html_())
-
+        html_path = result["map_path"]
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.get("/mst", response_model=MSTResponse, tags=["Analysis"])
-def get_mst_data(
-        west: float = Query(DEFAULT_BBOX[0], description="Западная долгота"),
-        south: float = Query(DEFAULT_BBOX[1], description="Южная широта"),
-        east: float = Query(DEFAULT_BBOX[2], description="Восточная долгота"),
-        north: float = Query(DEFAULT_BBOX[3], description="Северная широта")
-):
-    """
-    Получить данные MST в формате JSON
-
-    Альтернатива /analyze с тем же функционалом
-    """
-    return analyze_logistics_network(west, south, east, north)
 
 
 @app.delete("/cache", tags=["Cache"])

@@ -84,7 +84,7 @@ export default function AnalysisPage() {
         </>
     );
 
-    function areaToGeoJSON(area,routemode) {
+    function areaToGeoJSON(area, routemode) {
         return {
             type: "Feature",
             geometry: {
@@ -106,17 +106,29 @@ export default function AnalysisPage() {
 
     async function sendGeoJSON(geojson) {
         try {
-            const response = await fetch("https://httpbin.org/post", {
+            // Извлекаем координаты из GeoJSON
+            const [minLng, minLat] = geojson.geometry.coordinates[0][0];
+            const [maxLng, maxLat] = geojson.geometry.coordinates[0][2];
+            const mode = geojson.properties.mode;
+
+            // Формируем URL для запроса на FastAPI
+            const url = `http://localhost:8000/analyze?west=${minLng}&south=${minLat}&east=${maxLng}&north=${maxLat}&mode=${mode}`;
+
+            const response = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(geojson)
             });
+
+            if (!response.ok) {
+                throw new Error(`Ошибка сервера: ${response.status}`);
+            }
+
             const data = await response.json();
-            console.log("🔁 Ответ от сервера:", data.json);
-            alert("✅ Участок отправлен! Проверь консоль для деталей.");
+            console.log("✅ Ответ от FastAPI:", data);
+            alert("✅ Анализ выполнен! Проверь консоль для деталей.");
         } catch (err) {
             console.error("❌ Ошибка при отправке:", err);
-            alert("Ошибка при отправке данных на сервер!");
+            alert("Ошибка при обращении к серверу анализа!");
         }
     }
 

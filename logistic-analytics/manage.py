@@ -20,7 +20,6 @@ tags_logistics = {
 osm_features_cache = "kazan_logistics_features.geojson"
 osm_graph_cache = "kazan_drive.graphml"
 
-
 # Загрузка или кэширование логистических объектов
 if os.path.exists(osm_features_cache):
     centers_gdf = gpd.read_file(osm_features_cache)
