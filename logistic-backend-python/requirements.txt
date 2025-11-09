@@ -1,0 +1,10 @@
+osmnx==1.9.3
+geopandas==0.14.3
+pandas==2.1.4
+networkx==3.2.1
+numpy==1.26.4
+folium==0.16.0
+
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
