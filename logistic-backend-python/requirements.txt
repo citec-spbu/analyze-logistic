@@ -1,5 +1,5 @@
-osmnx==1.9.3
-geopandas==0.14.3
+osmnx==2.0.6
+geopandas==1.0.1
 pandas==2.1.4
 networkx==3.2.1
 numpy==1.26.4

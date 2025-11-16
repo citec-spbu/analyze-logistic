@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from models.schemas import BoundingBox, MSTResponse, MapResponse
 from fastapi.middleware.cors import CORSMiddleware
-from manage import generate_logistics_mst
+from services.logistics import generate_logistics_mst
 from typing import Optional
 import json
 
