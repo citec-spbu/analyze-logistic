@@ -59,7 +59,7 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     coords = []
     for _, row in gdf.iterrows():
         geom = row.geometry
-        if geom.geom_type in ["Polygon", "MultiPolygon"]:
+        if geom.geom_type in ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]:
             y, x = geom.centroid.y, geom.centroid.x
         else:
             y, x = geom.y, geom.x
@@ -99,8 +99,8 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
 def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
     """
     Отображает MST на карте Folium.
-    Для каждой пары связанных точек строится маршрут по дорогам выбранного типа (mode),
-    и отображается длина маршрута во всплывающем окне (popup) при клике на линию.
+    Для mode='auto' — длина по дорогам,
+    для других mode — длина прямой между точками.
     """
     # Центр карты
     m = folium.Map(
@@ -108,7 +108,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
         zoom_start=12
     )
 
-    # --- точки
+    # --- точки ---
     for _, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
@@ -127,12 +127,10 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    # --- загрузка дорожного графа
     print(f"📥 Загрузка дорожной сети для mode='{mode}' ...")
     G_drive = ox.graph_from_bbox(bbox, network_type="drive")
     print(f"✅ Граф: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
 
-    # --- привязываем точки к узлам
     coords_df = coords_df.copy()
     coords_df["osm_node"] = ox.distance.nearest_nodes(
         G_drive,
@@ -140,52 +138,56 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
         Y=coords_df["lat"].values
     )
 
-    # --- рёбра и подписи расстояний
-    print("🚗 Построение маршрутов по дорогам ...")
+    print("🚗 Построение маршрутов ...")
     for u, v, _ in mst.edges(data=True):
-        node_u = coords_df.iloc[u]["osm_node"]
-        node_v = coords_df.iloc[v]["osm_node"]
         row_u, row_v = coords_df.loc[u], coords_df.loc[v]
 
+        # если mode != 'auto', то считаем только по прямой
+        if mode != "auto":
+            dist_hav = haversine(
+                (row_u["lat"], row_u["lon"]),
+                (row_v["lat"], row_v["lon"])
+            )
+
+            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+            folium.PolyLine(
+                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+                color="green", weight=3, opacity=0.8,
+                popup=folium.Popup(popup_html, max_width=250)
+            ).add_to(m)
+            continue
+
+        # иначе (mode == 'auto') считаем по дорогам
+        node_u = row_u["osm_node"]
+        node_v = row_v["osm_node"]
         try:
             route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
         except Exception:
             route = None
 
         if route and len(route) > 1:
-            # вычисляем длину реального маршрута
             route_gdf = ox.routing.route_to_gdf(G_drive, route)
             dist_m = float(route_gdf["length"].sum())
             dist_km = dist_m / 1000.0
-
             popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
-
-            # рисуем прямую линию с popup
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color="blue", weight=3, opacity=0.8,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
-
+            color = "blue"
         else:
-            # если маршрут не найден — прямая линия по координатам
             dist_hav = haversine(
                 (row_u["lat"], row_u["lon"]),
                 (row_v["lat"], row_v["lon"])
             ) / 1000.0
-
             popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+            color = "gray"
 
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color="gray", weight=2, opacity=0.5, dash_array="5",
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
+        folium.PolyLine(
+            locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+            color=color, weight=3, opacity=0.8,
+            popup=folium.Popup(popup_html, max_width=250)
+        ).add_to(m)
 
     m.save(output_file)
     print(f"📄 Карта сохранена: {output_file}")
     return output_file
-
 
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
