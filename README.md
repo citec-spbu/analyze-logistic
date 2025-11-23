@@ -17,13 +17,13 @@ cd logistic-backend-python/ && pip install -r "requirements.txt" && cd ..
 Запуск приложения Windows
 
 ```bash
-start_win.bat
+start.bat
 ```
 
 Запуск приложения Linux
 
 ```bash
-./start_lin.sh
+./start.sh
 ```
 
 
