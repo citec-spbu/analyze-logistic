@@ -9,3 +9,5 @@ fastapi==0.104.1
 uvicorn==0.24.0
 pydantic==2.5.0
 fiona==1.9.5
+scikit-learn==1.4.2
+haversine==2.5

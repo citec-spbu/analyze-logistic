@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
-from models.schemas import BoundingBox, MSTResponse, MapResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+
+from models.schemas import MSTResponse
 from services.logistics import generate_logistics_mst
-from typing import Optional
-import json
 
 app = FastAPI(
     title="Logistics Network API",
@@ -87,7 +86,6 @@ def get_map(
         return HTMLResponse(content=html_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 @app.delete("/cache", tags=["Cache"])
