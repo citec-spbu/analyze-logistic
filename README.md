@@ -32,18 +32,18 @@ start.bat
 .
 ├── cache                   # Папка для результатов
 ├── logistic-backend/       # Бэкенд на FastAPI
-│   ├── app.py              # Основной файл приложения
-│   ├── requirements.txt    # Зависимости Python
+│   ├── src                 # Основная папка
 │   └── ...                 # Модули обработки данных, индексов, моделей
 │
-├── logistic-frontend/      # Фронтенд на Vite + React
+├── logistic-frontend/      # Фронтенд на Vite 
 │   ├── package.json
 │   ├── src/
 │   └── ...
 │
 ├── logistic-backend-python/         
-│   ├── package.json
-│   ├── src/
+│   ├── modeles
+│   ├── services
+│   ├── main.py             # исполняемый backend файл
 │   └── ...
 │
 ├── start.sh                # Скрипт запуска (Linux/macOS)
