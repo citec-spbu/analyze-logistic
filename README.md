@@ -26,5 +26,28 @@ start.bat
 ./start.sh
 ```
 
+### Структура репозитория
+
+.
+├── cache                   # Папка для результатов
+├── logistic-backend/       # Бэкенд на FastAPI
+│   ├── app.py              # Основной файл приложения
+│   ├── requirements.txt    # Зависимости Python
+│   └── ...                 # Модули обработки данных, индексов, моделей
+│
+├── logistic-frontend/      # Фронтенд на Vite + React
+│   ├── package.json
+│   ├── src/
+│   └── ...
+│
+├── logistic-backend-python/         
+│   ├── package.json
+│   ├── src/
+│   └── ...
+│
+├── start.sh                # Скрипт запуска (Linux/macOS)
+├── start.bat               # Скрипт запуска (Windows)
+└── README.md
+
 
 
