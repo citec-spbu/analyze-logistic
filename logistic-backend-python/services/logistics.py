@@ -108,8 +108,8 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
         zoom_start=12
     )
 
-    # --- точки ---
-    for _, row in coords_df.iterrows():
+    # точки
+    for i, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
 
@@ -127,63 +127,19 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    print(f"📥 Загрузка дорожной сети для mode='{mode}' ...")
-    G_drive = ox.graph_from_bbox(bbox, network_type="drive")
-    print(f"✅ Граф: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
-
-    coords_df = coords_df.copy()
-    coords_df["osm_node"] = ox.distance.nearest_nodes(
-        G_drive,
-        X=coords_df["lon"].values,
-        Y=coords_df["lat"].values
-    )
-
-    print("🚗 Построение маршрутов ...")
-    for u, v, _ in mst.edges(data=True):
+    # рёбра и подписи расстояний
+    for u, v, data in mst.edges(data=True):
         row_u, row_v = coords_df.loc[u], coords_df.loc[v]
-
-        # если mode != 'auto', то считаем только по прямой
-        if mode != "auto":
-            dist_hav = haversine(
-                (row_u["lat"], row_u["lon"]),
-                (row_v["lat"], row_v["lon"])
-            )
-
-            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color="green", weight=3, opacity=0.8,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
-            continue
-
-        # иначе (mode == 'auto') считаем по дорогам
-        node_u = row_u["osm_node"]
-        node_v = row_v["osm_node"]
-        try:
-            route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
-        except Exception:
-            route = None
-
-        if route and len(route) > 1:
-            route_gdf = ox.routing.route_to_gdf(G_drive, route)
-            dist_m = float(route_gdf["length"].sum())
-            dist_km = dist_m / 1000.0
-            popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
-            color = "blue"
-        else:
-            dist_hav = haversine(
-                (row_u["lat"], row_u["lon"]),
-                (row_v["lat"], row_v["lon"])
-            ) / 1000.0
-            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
-            color = "gray"
+        dist_m = float(data["weight"])
+        dist_km = dist_m / 1000.0
 
         folium.PolyLine(
-            locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-            color=color, weight=3, opacity=0.8,
-            popup=folium.Popup(popup_html, max_width=250)
-        ).add_to(m)
+        locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+        color="blue",
+        weight=2,
+        opacity=0.6,
+        popup=f"Расстояние: {dist_km:.2f} км"
+    ).add_to(m)
 
     m.save(output_file)
     print(f"📄 Карта сохранена: {output_file}")
@@ -216,15 +172,13 @@ def generate_logistics_mst(
     mst = build_mst_graph(G)
     html_path = visualize_mst_map(coords_df, mst, bbox, mode, output_file)
 
-    # ✅ Формируем полную структуру MST
+    # Формируем полную структуру MST
     points = []
     for _, row in coords_df.iterrows():
         clean_tags = {}
         for k, v in row["tags"].items():
-            # Пропускаем геометрию, она не сериализуется
             if k == "geometry":
                 continue
-            # Если значение NaN или None — ставим None
             if pd.isna(v):
                 clean_tags[k] = None
             else:
@@ -253,7 +207,6 @@ def generate_logistics_mst(
         "total_distance": total_distance,
         "points": points,
         "edges": edges,
-        # дополнительные поля (не мешают Pydantic, просто игнорируются)
         "map_path": html_path,
         "mode": mode,
         "bbox": bbox,
