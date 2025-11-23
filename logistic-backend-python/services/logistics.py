@@ -54,12 +54,12 @@ def load_logistics_features(
 
     if False:
         gdf = gpd.read_file(cache_path)
-        print(f"✅ Загружено из кэша: {cache_path}")
+        print(f"Загружено из кэша: {cache_path}")
     else:
-        print(f"🔍 Запрос к OSM для режима '{mode}'...")
+        print(f"Запрос к OSM для режима '{mode}'...")
         gdf = ox.features.features_from_bbox(bbox=bbox, tags=tags)
         gdf.to_file(cache_path, driver="GeoJSON")
-        print(f"💾 Найдено объектов: {len(gdf)} (сохранено в {cache_path})")
+        print(f"Найдено объектов: {len(gdf)} (сохранено в {cache_path})")
 
     return gdf
 
@@ -106,11 +106,52 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
     return nx.minimum_spanning_tree(G)
 
 
+def build_mst_rail_by_color(coords_df: pd.DataFrame) -> nx.Graph:
+    """
+    Для mode='rail': строит отдельное MST для каждой линии метро (по colour)
+    и отдельно MST для станций без цвета (NaN).
+    """
+    mst_total = nx.Graph()
+
+    # → группировка по цветам, включая nan-группу
+    groups = coords_df.groupby(
+        coords_df["tags"].apply(lambda t: t.get("colour") if "colour" in t else np.nan),
+        dropna=False
+    )
+
+    for color, group_df in groups:
+        if group_df.empty:
+            continue
+
+        color_label = color if pd.notna(color) else "NO_COLOR"
+        print(f"Строим MST для линии '{color_label}' ({len(group_df)} станций)")
+
+        # создаём локальную копию с переиндексацией (чтобы избежать «index out of range»)
+        group_df_local = group_df.reset_index(drop=False)  # сохраним исходные индексы
+        original_index = group_df_local["index"]
+
+        # строим геодезический граф и MST
+        subgraph = build_geodesic_graph(group_df_local)
+        mst_color = nx.minimum_spanning_tree(subgraph)
+
+        # переносим рёбра в общий MST с исходными индексами
+        for u, v, data in mst_color.edges(data=True):
+            idx_u = original_index.iloc[u]
+            idx_v = original_index.iloc[v]
+            mst_total.add_edge(
+                idx_u,
+                idx_v,
+                weight=data["weight"],
+                colour=None if pd.isna(color) else color
+            )
+
+    return mst_total
+
 def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
     """
     Отображает MST на карте Folium.
-    Для mode='auto' — длина по дорогам,
-    для других mode — длина прямой между точками.
+    Для mode='rail' линии имеют цвета по атрибуту 'colour',
+    для mode='auto' и других — просто зелёные/синие.
     """
     # Центр карты
     m = folium.Map(
@@ -137,75 +178,41 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    print(f"📥 Загрузка дорожной сети для mode='{mode}' ...")
-    G_drive = ox.graph_from_bbox(bbox, network_type="drive")
-    print(f"✅ Граф: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
+    print(f"📥 Отрисовка рёбер для mode='{mode}' ...")
 
-    coords_df = coords_df.copy()
-    coords_df["osm_node"] = ox.distance.nearest_nodes(
-        G_drive,
-        X=coords_df["lon"].values,
-        Y=coords_df["lat"].values
-    )
+    # --- рёбра ---
+    for u, v, data in mst.edges(data=True):
+        row_u = coords_df.loc[u]
+        row_v = coords_df.loc[v]
 
-    print("🚗 Построение маршрутов ...")
-    for u, v, _ in mst.edges(data=True):
-        row_u, row_v = coords_df.loc[u], coords_df.loc[v]
+        dist_hav = haversine(
+            (row_u["lat"], row_u["lon"]),
+            (row_v["lat"], row_v["lon"])
+        )
+        popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
 
-        # если mode != 'auto', то считаем только по прямой
-        if mode != "auto":
-            dist_hav = haversine(
-                (row_u["lat"], row_u["lon"]),
-                (row_v["lat"], row_v["lon"])
-            )
-
-            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color="green", weight=3, opacity=0.8,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
-            continue
-
-        # иначе (mode == 'auto') считаем по дорогам
-        node_u = row_u["osm_node"]
-        node_v = row_v["osm_node"]
-        try:
-            route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
-        except Exception:
-            route = None
-
-        if route and len(route) > 1:
-            route_gdf = ox.routing.route_to_gdf(G_drive, route)
-            dist_m = float(route_gdf["length"].sum())
-            dist_km = dist_m / 1000.0
-            popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
-            color = "blue"
+        edge_color = data.get("colour")
+        if pd.isna(edge_color) or not edge_color:
+            edge_color = "gray"
         else:
-            dist_hav = haversine(
-                (row_u["lat"], row_u["lon"]),
-                (row_v["lat"], row_v["lon"])
-            ) / 1000.0
-            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
-            color = "gray"
+            edge_color = str(edge_color).strip().lower()
 
         folium.PolyLine(
             locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-            color=color, weight=3, opacity=0.8,
+            color=edge_color,
+            weight=4,
+            opacity=0.85,
             popup=folium.Popup(popup_html, max_width=250)
         ).add_to(m)
 
+    # сохраняем на диск
     m.save(output_file)
     print(f"📄 Карта сохранена: {output_file}")
     return output_file
 
-
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
 # =====================
-
-import pandas as pd  # добавь импорт наверху, если его нет
-
 
 def generate_logistics_mst(
         bbox: Tuple[float, float, float, float],
@@ -223,8 +230,13 @@ def generate_logistics_mst(
         return {"status": "no_data", "message": "Нет логистических объектов в области."}
 
     coords_df = extract_coordinates(gdf)
-    G = build_geodesic_graph(coords_df)
-    mst = build_mst_graph(G)
+    # G = build_geodesic_graph(coords_df)
+    # mst = build_mst_graph(G)
+    if mode == "rail":
+        mst = build_mst_rail_by_color(coords_df)
+    else:
+        G = build_geodesic_graph(coords_df)
+        mst = build_mst_graph(G)
     html_path = visualize_mst_map(coords_df, mst, bbox, output_file)
 
     # Формируем полную структуру MST
