@@ -8,18 +8,20 @@ import folium
 from math import radians, sin, cos, sqrt, atan2, isnan
 from typing import Tuple, Dict, Any, Optional
 
+from haversine import haversine, Unit
+
 
 # =====================
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =====================
 
-def haversine(lat1, lon1, lat2, lon2):
-    """Геодезическое расстояние между точками в метрах"""
-    R = 6371000
-    phi1, phi2 = radians(lat1), radians(lat2)
-    dphi, dlambda = radians(lat2 - lat1), radians(lon2 - lon1)
-    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
-    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
+# def haversine(lat1, lon1, lat2, lon2):
+#     """Геодезическое расстояние между точками в метрах"""
+#     R = 6371000
+#     phi1, phi2 = radians(lat1), radians(lat2)
+#     dphi, dlambda = radians(lat2 - lat1), radians(lon2 - lon1)
+#     a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
+#     return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
 
 def get_default_tags(mode: str) -> Dict[str, list]:
@@ -67,7 +69,7 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     coords = []
     for _, row in gdf.iterrows():
         geom = row.geometry
-        if geom.geom_type in ["Polygon", "MultiPolygon"]:
+        if geom.geom_type in ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]:
             y, x = geom.centroid.y, geom.centroid.x
         else:
             y, x = geom.y, geom.x
@@ -80,12 +82,17 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
 
 
 def build_geodesic_graph(coords_df: pd.DataFrame) -> nx.Graph:
-    """Создаёт граф, соединяя все точки прямыми расстояниями"""
+    """Создаёт граф, соединяя все точки прямыми (геодезическими) расстояниями."""
     edges = []
     for i, row_i in coords_df.iterrows():
         for j, row_j in coords_df.iterrows():
             if i < j:
-                dist = haversine(row_i["lat"], row_i["lon"], row_j["lat"], row_j["lon"])
+                # ✅ обязательно передаём кортежи (lat, lon)
+                dist = haversine(
+                    (row_i["lat"], row_i["lon"]),
+                    (row_j["lat"], row_j["lon"]),
+                    unit=Unit.KILOMETERS,  # или Unit.METERS
+                )
                 edges.append((i, j, {"weight": dist}))
 
     G = nx.Graph()
@@ -99,41 +106,94 @@ def build_mst_graph(G: nx.Graph) -> nx.Graph:
     return nx.minimum_spanning_tree(G)
 
 
-def visualize_mst_map(coords_df, mst, bbox, output_file="logistics_mst.html"):
+def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
+    """
+    Отображает MST на карте Folium.
+    Для mode='auto' — длина по дорогам,
+    для других mode — длина прямой между точками.
+    """
+    # Центр карты
     m = folium.Map(
         location=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2],
-        zoom_start=11
+        zoom_start=12
     )
 
-    # точки
-    for i, row in coords_df.iterrows():
+    # --- точки ---
+    for _, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
-        tags = row["tags"]
+
+        tags = row.get("tags", {})
         name = tags.get("name")
         btype = tags.get("building", "—")
+
         popup_lines = [f"<b>Тип:</b> {btype}"]
         if name and not pd.isna(name):
             popup_lines.append(f"<b>Название:</b> {name}")
+
         folium.CircleMarker(
             location=[float(row["lat"]), float(row["lon"])],
             radius=6, color="red", fill=True, fill_color="red",
             popup=folium.Popup("<br>".join(popup_lines), max_width=500)
         ).add_to(m)
 
-    # рёбра и подписи расстояний
-    for u, v, data in mst.edges(data=True):
+    print(f"📥 Загрузка дорожной сети для mode='{mode}' ...")
+    G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+    print(f"✅ Граф: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
+
+    coords_df = coords_df.copy()
+    coords_df["osm_node"] = ox.distance.nearest_nodes(
+        G_drive,
+        X=coords_df["lon"].values,
+        Y=coords_df["lat"].values
+    )
+
+    print("🚗 Построение маршрутов ...")
+    for u, v, _ in mst.edges(data=True):
         row_u, row_v = coords_df.loc[u], coords_df.loc[v]
-        dist_m = float(data["weight"])
-        dist_km = dist_m / 1000.0
+
+        # если mode != 'auto', то считаем только по прямой
+        if mode != "auto":
+            dist_hav = haversine(
+                (row_u["lat"], row_u["lon"]),
+                (row_v["lat"], row_v["lon"])
+            )
+
+            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+            folium.PolyLine(
+                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+                color="green", weight=3, opacity=0.8,
+                popup=folium.Popup(popup_html, max_width=250)
+            ).add_to(m)
+            continue
+
+        # иначе (mode == 'auto') считаем по дорогам
+        node_u = row_u["osm_node"]
+        node_v = row_v["osm_node"]
+        try:
+            route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
+        except Exception:
+            route = None
+
+        if route and len(route) > 1:
+            route_gdf = ox.routing.route_to_gdf(G_drive, route)
+            dist_m = float(route_gdf["length"].sum())
+            dist_km = dist_m / 1000.0
+            popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
+            color = "blue"
+        else:
+            dist_hav = haversine(
+                (row_u["lat"], row_u["lon"]),
+                (row_v["lat"], row_v["lon"])
+            ) / 1000.0
+            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+            color = "gray"
 
         folium.PolyLine(
-        locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-        color="blue",
-        weight=2,
-        opacity=0.6,
-        popup=f"Расстояние: {dist_km:.2f} км"
-    ).add_to(m)
+            locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
+            color=color, weight=3, opacity=0.8,
+            popup=folium.Popup(popup_html, max_width=250)
+        ).add_to(m)
 
     m.save(output_file)
     print(f"📄 Карта сохранена: {output_file}")
@@ -207,3 +267,4 @@ def generate_logistics_mst(
         "bbox": bbox,
         "status": "ok"
     }
+
