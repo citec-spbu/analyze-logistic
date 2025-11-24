@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Layout from "../layout/Layout";
 import MapView from "../components/MapView";
@@ -12,6 +12,33 @@ export default function AnalysisPage() {
     const [point1, setPoint1] = useState("");
     const [point2, setPoint2] = useState("");
     const [selectedMode, setSelectedMode] = useState("auto");
+
+    const [isLoading, setIsLoading] = useState(false);
+    const [loadingText, setLoadingText] = useState("Подготовка...");
+
+    // циклическое обновление текста загрузки
+    useEffect(() => {
+        if (!isLoading) return;
+
+        const steps = [
+            "Загружаем объекты OSM...",
+            "Извлекаем координаты...",
+            "Строим граф расстояний...",
+            "Строим минимальное остовное дерево...",
+            "Генерируем карту...",
+            "Формируем результаты..."
+        ];
+        
+        let index = 0;
+        setLoadingText(steps[index]);
+
+        const interval = setInterval(() => {
+            index = (index + 1) % steps.length;
+            setLoadingText(steps[index]);
+        }, 900);
+
+        return () => clearInterval(interval);
+    }, [isLoading]);
 
     const sidebarContent = (
         <>
@@ -60,7 +87,7 @@ export default function AnalysisPage() {
                         checked={selectedMode === "aero"}
                         onChange={() => setSelectedMode("aero")}
                     />{" "}
-                    Авиамаршрут
+                    Авиационный
                 </label>
 
                 <label style={{ display: "block", marginBottom: "6px" }}>
@@ -71,7 +98,7 @@ export default function AnalysisPage() {
                         checked={selectedMode === "sea"}
                         onChange={() => setSelectedMode("sea")}
                     />{" "}
-                    Морской маршрут
+                    Морской
                 </label>
 
                 <label style={{ display: "block" }}>
@@ -140,17 +167,20 @@ export default function AnalysisPage() {
             return;
         }
 
+        setIsLoading(true);
+
         // TODO: Логика обработки выделенного участка карты
         // Создаём GeoJSON-объект из выбранной области
         const geojson = areaToGeoJSON(selectedArea, selectedMode);
         console.log("Отправляем GeoJSON:", geojson);
         try {
             const resultData = await sendGeoJSON(geojson);
-
+            setIsLoading(false);
              navigate("/result", { state: resultData });
 
         } catch (err) {
             console.error("Ошибка при отправке:", err);
+            setIsLoading(false);
             alert("Ошибка при обращении к серверу анализа!");
         }
     };
@@ -193,6 +223,52 @@ export default function AnalysisPage() {
                 >
                     Начать анализ
                 </button>
+            )}  
+
+            {isLoading && (
+                <div style={{
+                    position: "fixed",
+                    top: 0, left: 0,
+                    width: "100%",
+                    height: "100%",
+                    backgroundColor: "rgba(0,0,0,0.5)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 2000
+                }}>
+                    <div style={{
+                        background: "white",
+                        padding: "20px 30px",
+                        borderRadius: "10px",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                        minWidth: "300px",
+                        textAlign: "center",
+                        fontSize: "18px",
+                        fontWeight: "bold"
+                    }}>
+                        <div className="loader" style={{
+                            width: "40px",
+                            height: "40px",
+                            border: "4px solid #ccc",
+                            borderTop: "4px solid #0f62fe",
+                            borderRadius: "50%",
+                            margin: "0 auto 16px",
+                            animation: "spin 1s linear infinite"
+                        }} />
+                        {loadingText}
+                    </div>
+
+                    {/* Анимация вращения */}
+                    <style>
+                        {`
+                            @keyframes spin {
+                                from { transform: rotate(0deg); }
+                                to { transform: rotate(360deg); }
+                            }
+                        `}
+                    </style>
+                </div>
             )}
 
             {/* Информация о выбранной области */}
