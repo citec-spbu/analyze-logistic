@@ -28,3 +28,9 @@ class MapResponse(BaseModel):
     html_content: str
     points_count: int
     edges_count: int
+
+class MSTAnalysisResponse(BaseModel):
+    status: str
+    metric_used: str
+    analysis_map: str
+    metrics: Dict[str, Dict[int, float]]

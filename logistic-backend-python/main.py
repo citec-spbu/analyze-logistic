@@ -1,15 +1,20 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+
 
 from models.schemas import MSTResponse
-from services.logistics import generate_logistics_mst
+from services.logistics import generate_logistics_mst,  analyze_logistics_metrics
+from services.logistics import compute_metric
 
 app = FastAPI(
     title="Logistics Network API",
     description="API для анализа логистических сетей с использованием MST",
     version="1.0.0"
 )
+app.mount("/cache", StaticFiles(directory="cache"), name="cache")
+app.mount("/results", StaticFiles(directory="results"), name="results")
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,7 +91,36 @@ def get_map(
         return HTMLResponse(content=html_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
 
+@app.get("/metrics", tags=["Metrics"])
+def calculate_metrics(
+        metric: str = Query(..., description="Тип метрики: degree_centrality / closeness_centrality / betweenness_centrality / pagerank"),
+        west: float = Query(DEFAULT_BBOX[0]),
+        south: float = Query(DEFAULT_BBOX[1]),
+        east: float = Query(DEFAULT_BBOX[2]),
+        north: float = Query(DEFAULT_BBOX[3]),
+        mode: str = Query("auto")
+):
+    """
+    Анализ графовой метрики и генерация HTML-карты результата.
+    """
+    bbox = (west, south, east, north)
+
+    try:
+        result = analyze_logistics_metrics(bbox=bbox, mode=mode, metric=metric)
+
+        if result.get("status") != "ok":
+            raise HTTPException(status_code=400, detail=result.get("message", "Ошибка метрики"))
+
+        return {
+            "map_path": result["map_path"],
+            "metric": metric,
+            "status": "ok"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/cache", tags=["Cache"])
 def clear_cache():
