@@ -46,12 +46,12 @@ def load_logistics_features(
 
     tags = get_default_tags(mode)
 
-    if os.path.exists(cache_path):
-        print(f"Используем кэшированный файл: {cache_path}")
-        gdf = gpd.read_file(cache_path)
-        if not gdf.empty:
-            return gdf
-        print("Кэш пустой — перезагружаем.")
+    # if os.path.exists(cache_path):
+    #     print(f"Используем кэшированный файл: {cache_path}")
+    #     gdf = gpd.read_file(cache_path)
+    #     if not gdf.empty:
+    #         return gdf
+    #     print("Кэш пустой — перезагружаем.")
 
     print(f"Запрос в OSM ('{mode}')...")
     gdf = ox.features.features_from_bbox(bbox=bbox, tags=tags)
@@ -427,7 +427,8 @@ def generate_logistics_mst(
     mst_map_path = output_file or os.path.join(cache_dir, f"mst_{mode}.html").replace("\\", "/")
 
     # загрузка кэша
-    if os.path.exists(coords_path) and os.path.exists(mst_path):
+    # if os.path.exists(coords_path) and os.path.exists(mst_path):
+    if False:
         coords_df = pd.read_pickle(coords_path)
         with open(mst_path, "rb") as f: mst = pickle.load(f)
 
@@ -453,9 +454,9 @@ def generate_logistics_mst(
             G = build_geodesic_graph(coords_df)
             # строим MST по линиям
             mst = build_mst_rail_by_color(coords_df)
-        elif mode == "sea":
-            G = build_sea_graph(coords_df)
-            mst = build_mst_graph(G)
+        # elif mode == "sea":
+        #     G = build_sea_graph(coords_df)
+        #     mst = build_mst_graph(G)
         else:  # auto, aero и др.
             G = build_geodesic_graph(coords_df)
             mst = build_mst_graph(G)

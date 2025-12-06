@@ -39,8 +39,14 @@ export default function ResultPage() {
     try {
         setLoading(true);
 
+        const { bbox } = resultData;
+
         const url = `http://localhost:8000/metrics` +
                     `?metric=${encodeURIComponent(metric)}` +
+                    `&west=${bbox[0]}` +
+                    `&south=${bbox[1]}` +
+                    `&east=${bbox[2]}` +
+                    `&north=${bbox[3]}` +
                     `&mode=${encodeURIComponent(mode)}`;
 
         const resp = await fetch(url);
