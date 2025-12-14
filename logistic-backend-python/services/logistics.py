@@ -37,7 +37,7 @@ def get_default_tags(mode: str) -> Dict[str, list]:
 def load_logistics_features(
         bbox: Tuple[float, float, float, float],
         mode: str = "auto",
-        cache_dir: str = "results",
+        cache_dir: str = "cache",
         cache_path: Optional[str] = None
 ) -> gpd.GeoDataFrame:
     """Загружает или кэширует объекты логистической инфраструктуры"""
@@ -59,6 +59,15 @@ def load_logistics_features(
     print(f"Сохранено объектов: {len(gdf)} → {cache_path}")
     return gdf
 
+def clean_tags(row_dict):
+    clean = {}
+    for k, v in row_dict.items():
+        if k == "geometry":
+            continue
+        if pd.isna(v):
+            continue
+        clean[k] = str(v)
+    return clean
 
 def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
     """Извлекает координаты центроидов логистических объектов"""
@@ -70,9 +79,9 @@ def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
         else:
             y, x = geom.y, geom.x
         coords.append({
-            "lat": y,
-            "lon": x,
-            "tags": row.to_dict()
+            "lat": float(y),
+            "lon": float(x),
+            "tags": clean_tags(row.to_dict())
         })
     return pd.DataFrame(coords)
 
@@ -107,8 +116,8 @@ def build_mst_rail_by_color(coords_df: pd.DataFrame) -> nx.Graph:
     и отдельно MST для станций без цвета (NaN).
     """
     mst_total = nx.Graph()
-
-    # → группировка по цветам, включая nan-группу
+    mst_total.add_nodes_from(coords_df.index)
+    # группировка по цветам, включая nan-группу
     groups = coords_df.groupby(
         coords_df["tags"].apply(lambda t: t.get("colour") if "colour" in t else np.nan),
         dropna=False
@@ -201,7 +210,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
         </style>
     """))
 
-    # --- точки ---
+    # точки
     for _, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
@@ -250,7 +259,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
     for u, v, data in mst.edges(data=True):
         row_u, row_v = coords_df.loc[u], coords_df.loc[v]
 
-        # ---------------- AUTO MODE (расстояние по дорогам)
+        #  AUTO MODE (расстояние по дорогам)
         if mode == "auto":
             node_u = row_u["osm_node"]
             node_v = row_v["osm_node"]
@@ -280,7 +289,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             ).add_to(m)
             continue
 
-        # ---------------- RAIL MODE (цветные линии метро)
+        #  RAIL MODE (цветные линии метро)
         if mode == "rail":
             dist_hav = haversine(
                 (row_u["lat"], row_u["lon"]),
@@ -303,7 +312,7 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
             ).add_to(m)
             continue
 
-        # ---------------- ОСТАЛЬНЫЕ МОДЫ (aero, sea и др.)
+        #  ОСТАЛЬНЫЕ МОДЫ (aero, sea и др.)
         dist_hav = haversine(
             (row_u["lat"], row_u["lon"]),
             (row_v["lat"], row_v["lon"])
@@ -322,14 +331,19 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
 
 def compute_metric(G, metric):
     metric = metric.lower()
+
     if metric in ["degree", "degree_centrality"]:
         return nx.degree_centrality(G)
+
     elif metric in ["closeness", "closeness_centrality"]:
-        return nx.closeness_centrality(G)
+        return nx.closeness_centrality(G, distance="weight")
+
     elif metric in ["betweenness", "betweenness_centrality"]:
-        return nx.betweenness_centrality(G, normalized=True)
+        return nx.betweenness_centrality(G, weight="weight", normalized=True)
+
     elif metric == "pagerank":
-        return nx.pagerank(G, alpha=0.8)
+        return nx.pagerank(G, weight="weight", alpha=0.85)
+
     else:
         raise ValueError(f"Неизвестная метрика: {metric}")
 
@@ -416,7 +430,7 @@ def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_ma
 def generate_logistics_mst(
         bbox: Tuple[float, float, float, float],
         mode: str = "auto",
-        cache_dir: str = ".",
+        cache_dir: str = "cache",
         output_file: Optional[str] = None
 ) -> Dict[str, Any]:
     os.makedirs(cache_dir, exist_ok=True)
@@ -516,7 +530,13 @@ def analyze_logistics_metrics(bbox, mode, metric, cache_dir="cache"):
     if mst.number_of_nodes() == 0:
         return {"status": "error", "message": "MST пустой."}
 
+    if mst.number_of_nodes() < 2:
+        return {
+            "status": "error",
+            "message": "Недостаточно вершин для расчёта метрик."
+        }
     metric_vals = compute_metric(mst, metric)
+    
     visualize_metric_map(coords_df, mst, metric_vals, bbox, output_file=metric_map_path)
 
     metric_vals_clean = {int(k): float(v) for k, v in metric_vals.items()}

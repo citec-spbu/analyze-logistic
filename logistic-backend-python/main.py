@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from models.schemas import MSTResponse
 from services.logistics import generate_logistics_mst,  analyze_logistics_metrics
 from services.logistics import compute_metric
+import os
 
 app = FastAPI(
     title="Logistics Network API",
@@ -14,7 +15,6 @@ app = FastAPI(
     version="1.0.0"
 )
 app.mount("/cache", StaticFiles(directory="cache"), name="cache")
-app.mount("/results", StaticFiles(directory="results"), name="results")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,7 +43,7 @@ def read_root():
     }
 
 
-@app.post("/analyze", response_model=MSTResponse, tags=["Analysis"])
+@app.post("/analyze", tags=["Analysis"])
 def analyze_logistics_network(
         west: float = Query(DEFAULT_BBOX[0], description="Западная долгота"),
         south: float = Query(DEFAULT_BBOX[1], description="Южная широта"),
@@ -81,7 +81,7 @@ def get_map(
     """
     bbox = (west, south, east, north)
     try:
-        result = generate_logistics_mst(bbox, mode, cache_dir="results")
+        result = generate_logistics_mst(bbox, mode, cache_dir="cache")
         if result.get("status") != "ok":
             return HTMLResponse(f"<h3>{result.get('message', 'Нет данных')}</h3>", status_code=404)
 
@@ -108,11 +108,16 @@ def calculate_metrics(
     bbox = (west, south, east, north)
 
     try:
-        result = analyze_logistics_metrics(bbox=bbox, mode=mode, metric=metric)
+        result = analyze_logistics_metrics(bbox=bbox, mode=mode, metric=metric,cache_dir="cache")
 
         if result.get("status") != "ok":
             raise HTTPException(status_code=400, detail=result.get("message", "Ошибка метрики"))
 
+        if not os.path.exists(result["map_path"]):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Файл карты не создан: {result['map_path']}"
+            )
         return {
             "map_path": result["map_path"],
             "metric": metric,
