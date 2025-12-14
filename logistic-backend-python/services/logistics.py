@@ -8,6 +8,8 @@ import folium
 from math import radians, sin, cos, sqrt, atan2, isnan
 from typing import Tuple, Dict, Any, Optional
 import pickle
+import shutil
+import atexit
 
 from haversine import haversine, Unit
 from scgraph.geographs.marnet import marnet_geograph
@@ -29,6 +31,21 @@ def get_default_tags(mode: str) -> Dict[str, list]:
         return {"railway": ["station", "yard", "cargo_terminal"]}
     else:
         raise ValueError(f"Неизвестный мод: {mode}")
+    
+def clear_cache_contents():
+    if os.path.exists("cache"):
+        for filename in os.listdir("cache"):
+            file_path = os.path.join("cache", filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print(f"Не удалось удалить {file_path}: {e}")
+        print(f"Содержимое кэша  очищено")
+
+atexit.register(clear_cache_contents)
 
 # =====================
 #  ОСНОВНЫЕ ФУНКЦИИ
@@ -188,20 +205,13 @@ def build_sea_graph(coords_df: pd.DataFrame) -> nx.Graph:
                 G.add_edge(i, j, weight=dist)
     return G
 
-def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
-    """
-    Отображает MST на карте Folium.
-    - Для mode='auto': длина маршрутов по дорогам OSM.
-    - Для mode='rail': линии по 'colour' или серые, если цвета нет.
-    - Для остальных режимов — прямые отрезки между точками.
-    """
-    # Центр карты
+def create_base_map(bbox):
     m = folium.Map(
         location=[(bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2],
         zoom_start=12,
         zoom_control=False,
-        tiles='OpenStreetMap',
-        attr=''
+        tiles="OpenStreetMap",
+        attr=""
     )
 
     m.get_root().html.add_child(folium.Element("""
@@ -210,123 +220,129 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
         </style>
     """))
 
-    # точки
+    return m
+
+def draw_nodes_layer(m, coords_df):
     for _, row in coords_df.iterrows():
         if pd.isna(row["lat"]) or pd.isna(row["lon"]):
             continue
 
         tags = row.get("tags", {})
         name = tags.get("name")
-        if not name or pd.isna(name):
-            name_display = f"{row['lat']:.6f}, {row['lon']:.6f}"
-        else:
-            name_display = str(name)
+        name_display = name if name and not pd.isna(name) else f"{row['lat']:.6f}, {row['lon']:.6f}"
         btype = tags.get("building", "—")
 
-        addr_parts = []
-        for key in ["addr:housenumber", "addr:street", "addr:city", "addr:postcode", "addr:country"]:
-            if key in tags and pd.notna(tags[key]):
-                addr_parts.append(str(tags[key]))
-        address = ", ".join(addr_parts) if addr_parts else None
-
-        popup_lines = [f"<b>Название:</b> {name_display}"]
-        if address:
-            popup_lines.append(f"<b>Адрес:</b> {address}")
-        popup_lines.append(f"<b>Тип:</b> {btype}")
+        popup = folium.Popup(
+            f"<b>Название:</b> {name_display}<br><b>Тип:</b> {btype}",
+            max_width=400
+        )
 
         folium.CircleMarker(
-            location=[float(row["lat"]), float(row["lon"])],
-            radius=6, color="red", fill=True, fill_color="red",
-            popup=folium.Popup("<br>".join(popup_lines), max_width=500)
+            location=[row["lat"], row["lon"]],
+            radius=6,
+            color="red",
+            fill=True,
+            fill_color="red",
+            popup=popup
         ).add_to(m)
 
-    # Для авто-транспорта подгружаем дорожный граф OSM
+def draw_mst_layer(m, coords_df, mst, bbox, mode):
+    """Рисует MST, безопасно обрабатывая ошибки авто/OSMnx"""
+    fg = folium.FeatureGroup(name=f"MST: {mode}")
+
     G_drive = None
-    if mode == "auto":
-        print(f"Загрузка дорожной сети для mode='{mode}' ...")
-        G_drive = ox.graph_from_bbox(bbox, network_type="drive")
-        print(f"Граф дорог: узлов={len(G_drive.nodes)}, рёбер={len(G_drive.edges)}")
-
-        coords_df = coords_df.copy()
-        coords_df["osm_node"] = ox.distance.nearest_nodes(
-            G_drive,
-            X=coords_df["lon"].values,
-            Y=coords_df["lat"].values
-        )
-
-    print(f"Отрисовка рёбер для mode='{mode}' ...")
+    # AUTO: пробуем OSMnx, но не падаем
+    if mode == "auto" and len(coords_df) >= 2:
+        try:
+            G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+            if len(G_drive.nodes) == 0:
+                G_drive = None
+            else:
+                coords_df = coords_df.copy()
+                coords_df["osm_node"] = ox.distance.nearest_nodes(
+                    G_drive, X=coords_df["lon"].values, Y=coords_df["lat"].values
+                )
+        except Exception as e:
+            print(f"OSMnx авто режим недоступен: {e}")
+            G_drive = None
 
     for u, v, data in mst.edges(data=True):
-        row_u, row_v = coords_df.loc[u], coords_df.loc[v]
+        ru, rv = coords_df.loc[u], coords_df.loc[v]
 
-        #  AUTO MODE (расстояние по дорогам)
-        if mode == "auto":
-            node_u = row_u["osm_node"]
-            node_v = row_v["osm_node"]
+        # AUTO с OSMnx
+        if mode == "auto" and G_drive is not None:
             try:
-                route = ox.routing.shortest_path(G_drive, node_u, node_v, weight="length", cpus=4)
-                if route and len(route) > 1:
-                    route_gdf = ox.routing.route_to_gdf(G_drive, route)
-                    dist_m = float(route_gdf["length"].sum())
-                    dist_km = dist_m / 1000.0
-                    popup_html = f"<b>Расстояние по дорогам:</b> {dist_km:.2f}&nbsp;км"
-                else:
-                    raise ValueError("Маршрут не найден.")
-            except Exception as e:
-                dist_km = haversine(
-                    (row_u["lat"], row_u["lon"]),
-                    (row_v["lat"], row_v["lon"])
-                )
-                popup_html = f"<b>Прямое расстояние:</b> {dist_km:.2f}&nbsp;км (fallback)"
-
-            # Рисуем простую прямую между точками
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color="gray",
-                weight=3,
-                opacity=0.8,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
-            continue
-
-        #  RAIL MODE (цветные линии метро)
-        if mode == "rail":
-            dist_hav = haversine(
-                (row_u["lat"], row_u["lon"]),
-                (row_v["lat"], row_v["lon"])
-            )
-            popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
-
-            edge_color = data.get("colour")
-            if pd.isna(edge_color) or not edge_color:
-                edge_color = "gray"
-            else:
-                edge_color = str(edge_color).strip().lower()
-
-            folium.PolyLine(
-                locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-                color=edge_color,
-                weight=4,
-                opacity=0.85,
-                popup=folium.Popup(popup_html, max_width=250)
-            ).add_to(m)
-            continue
-
-        #  ОСТАЛЬНЫЕ МОДЫ (aero, sea и др.)
-        dist_hav = haversine(
-            (row_u["lat"], row_u["lon"]),
-            (row_v["lat"], row_v["lon"])
-        )
-        popup_html = f"<b>Прямое расстояние:</b> {dist_hav:.2f}&nbsp;км"
+                route = ox.routing.shortest_path(G_drive, ru["osm_node"], rv["osm_node"], weight="length")
+                route_gdf = ox.routing.route_to_gdf(G_drive, route)
+                dist_km = route_gdf["length"].sum() / 1000
+            except Exception:
+                dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
+            color, weight = "gray", 3
+        # RAIL
+        elif mode == "rail":
+            dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
+            color = data.get("colour") or "blue"
+            weight = 4
+        # OTHER
+        else:
+            dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
+            color, weight = "yellow", 3
 
         folium.PolyLine(
-            locations=[[row_u["lat"], row_u["lon"]], [row_v["lat"], row_v["lon"]]],
-            color="gray", weight=3, opacity=0.8,
-            popup=folium.Popup(popup_html, max_width=250)
-        ).add_to(m)
+            [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
+            color=color,
+            weight=weight,
+            opacity=0.85,
+            popup=f"{dist_km:.2f} км"
+        ).add_to(fg)
+
+    fg.add_to(m)
+
+
+def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.html"):
+    m = create_base_map(bbox)
+    draw_nodes_layer(m, coords_df)
+    draw_mst_layer(m, coords_df, mst, bbox, mode)
+
+    folium.LayerControl(collapsed=False).add_to(m)
 
     m.save(output_file)
     print(f"Карта сохранена: {output_file}")
+    return output_file
+
+def generate_all_modes_mst(bbox, cache_dir="cache", output_file="logistics_mst_all.html"):
+    """Безопасно строим MST для всех модов сразу"""
+    modes = ["auto", "rail", "sea", "aero"]
+    os.makedirs(cache_dir, exist_ok=True)
+
+    m = create_base_map(bbox)
+    all_coords = {}
+
+    for mode in modes:
+        res = generate_logistics_mst(bbox, mode, cache_dir)
+        if res["status"] in ["ok", "no_data"]:
+            try:
+                coords_df = pd.read_pickle(os.path.join(cache_dir, f"coords_{mode}.pkl"))
+                all_coords[mode] = coords_df
+                mst_path = os.path.join(cache_dir, f"mst_{mode}.pkl")
+                with open(mst_path, "rb") as f:
+                    mst = pickle.load(f)
+                draw_mst_layer(m, coords_df, mst, bbox, mode)
+            except Exception as e:
+                print(f"Ошибка MST для {mode}: {e}")
+
+    # все точки
+    combined_coords_df = pd.concat(all_coords.values(), ignore_index=True) if all_coords else pd.DataFrame()
+    draw_nodes_layer(m, combined_coords_df)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+    m.get_root().html.add_child(folium.Element("""
+    <style>
+        .leaflet-top.leaflet-right { top: 80px; }
+    </style>
+"""))
+    m.save(output_file)
+    print(f"Все MST сохранены на карте: {output_file}")
     return output_file
 
 def compute_metric(G, metric):
@@ -360,9 +376,12 @@ def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_ma
 
     m.get_root().html.add_child(folium.Element("""
         <style>
-            .leaflet-control-attribution { display: none !important; }
+            .leaflet-top.leaflet-right {
+                top: auto !important;   /* отменяем верхнее выравнивание */
+                bottom: 20px !important; /* ставим снизу */
+            }
         </style>
-    """))
+        """))
 
     # Нормализация значений для цветов
     values = np.array(list(metric_vals.values()))
@@ -423,97 +442,78 @@ def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_ma
     m.save(output_file)
     return output_file
 
+
+
 # =====================
 #  ГЛАВНАЯ ФУНКЦИЯ API
 # =====================
 
-def generate_logistics_mst(
-        bbox: Tuple[float, float, float, float],
-        mode: str = "auto",
-        cache_dir: str = "cache",
-        output_file: Optional[str] = None
-) -> Dict[str, Any]:
+def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=None):
+    """Генерация MST для одного режима с полной защитой от ошибок Overpass/OSMnx"""
     os.makedirs(cache_dir, exist_ok=True)
 
     coords_path = os.path.join(cache_dir, f"coords_{mode}.pkl")
-    graph_path  = os.path.join(cache_dir, f"graph_{mode}.pkl")
-    mst_path    = os.path.join(cache_dir, f"mst_{mode}.pkl")
+    mst_path = os.path.join(cache_dir, f"mst_{mode}.pkl")
     mst_map_path = output_file or os.path.join(cache_dir, f"mst_{mode}.html").replace("\\", "/")
 
-    # загрузка кэша
-    # if os.path.exists(coords_path) and os.path.exists(mst_path):
-    if False:
-        coords_df = pd.read_pickle(coords_path)
-        with open(mst_path, "rb") as f: mst = pickle.load(f)
+    try:
+        gdf = None
+        try:
+            gdf = load_logistics_features(bbox, mode, cache_dir)
+        except Exception as e:
+            print(f"Ошибка загрузки OSM для {mode}: {e}")
+            gdf = gpd.GeoDataFrame(columns=["geometry", "tags"])
 
-        if os.path.exists(graph_path):
-            with open(graph_path, "rb") as f: G = pickle.load(f)
+        if gdf.empty or len(gdf) < 2:
+            print(f"Недостаточно объектов для {mode}, строим MST с фиктивными точками (0 точек → пустой MST)")
+            coords_df = pd.DataFrame(columns=["lat", "lon", "tags"])
+            mst = nx.Graph()
         else:
-            G = None
+            coords_df = extract_coordinates(gdf)
+            if mode == "rail":
+                mst = build_mst_rail_by_color(coords_df)
+            else:
+                G = build_geodesic_graph(coords_df)
+                mst = build_mst_graph(G)
 
-        print(f"Используем кэшированные данные MST для режима '{mode}'.")
-    else:
-        # загрузка данных
-        gdf = load_logistics_features(bbox, mode, cache_dir)
-        if gdf.empty:
-            return {"status": "no_data", "message": "Нет логистических объектов в области."}
-
-        coords_df = extract_coordinates(gdf)
-        if coords_df.empty:
-            return {"status": "no_data", "message": "Нет координат для графа."}
-
-        # построение графа и MST
-        if mode == "rail":
-            # создаём общий граф всех станций
-            G = build_geodesic_graph(coords_df)
-            # строим MST по линиям
-            mst = build_mst_rail_by_color(coords_df)
-        # elif mode == "sea":
-        #     G = build_sea_graph(coords_df)
-        #     mst = build_mst_graph(G)
-        else:  # auto, aero и др.
-            G = build_geodesic_graph(coords_df)
-            mst = build_mst_graph(G)
-
-        # сохранение кэша
         coords_df.to_pickle(coords_path)
-        if G is not None:
-            with open(graph_path, "wb") as f: pickle.dump(G, f)
         with open(mst_path, "wb") as f: pickle.dump(mst, f)
 
-        # сохранение карты
-        visualize_mst_map(coords_df, mst, bbox, mode, output_file=mst_map_path)
+        # карта
+        try:
+            visualize_mst_map(coords_df, mst, bbox, mode, output_file=mst_map_path)
+        except Exception as e:
+            print(f"Ошибка визуализации MST: {e}")
 
-    # формирование ответа
-    points = [
-        {"lat": float(row["lat"]), "lon": float(row["lon"]),
-         "tags": {k: (None if pd.isna(v) else str(v)) for k, v in row["tags"].items() if k != "geometry"}}
-        for _, row in coords_df.iterrows()
-    ]
+        points = [
+            {"lat": float(row["lat"]), "lon": float(row["lon"]),
+             "tags": {k: (None if pd.isna(v) else str(v)) for k, v in row["tags"].items() if k != "geometry"}}
+            for _, row in coords_df.iterrows()
+        ]
 
-    edges = [
-        {"from_index": int(u), "to_index": int(v), "distance": float(data["weight"])}
-        for u, v, data in mst.edges(data=True)
-    ]
+        edges = [
+            {"from_index": int(u), "to_index": int(v), "distance": float(data["weight"])}
+            for u, v, data in mst.edges(data=True)
+        ]
 
-    total_distance = sum(edge["distance"] for edge in edges)
-    nodes_count = len(points)
-    edges_count = len(edges)
+        total_distance = sum(edge["distance"] for edge in edges)
 
-    return {
-        "status": "ok",
-        "map_path": mst_map_path,
-        "coords_path": coords_path,
-        "graph_path": graph_path if G is not None else None,
-        "mst_path": mst_path,
-        "bbox": bbox,
-        "mode": mode,
-        "points": points,
-        "edges": edges,
-        "total_distance": total_distance,
-        "nodes_count": nodes_count,
-        "edges_count": edges_count
-    }
+        return {
+            "status": "ok",
+            "map_path": mst_map_path,
+            "coords_path": coords_path,
+            "mst_path": mst_path,
+            "bbox": bbox,
+            "mode": mode,
+            "points": points,
+            "edges": edges,
+            "total_distance": total_distance,
+            "nodes_count": len(points),
+            "edges_count": len(edges)
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 def analyze_logistics_metrics(bbox, mode, metric, cache_dir="cache"):
     coords_path = os.path.join(cache_dir, f"coords_{mode}.pkl")

@@ -22,57 +22,55 @@ export default function ResultPage() {
     const defaultMapSrc = useMemo(() => {
         if (!resultData) return "";
         const { bbox } = resultData;
-        return (
-            `http://localhost:8000/map` +
-            `?west=${bbox[0]}` +
-            `&south=${bbox[1]}` +
-            `&east=${bbox[2]}` +
-            `&north=${bbox[3]}` +
-            `&mode=${mode}`
-        );
+
+        if (mode === "all") {
+            return `http://localhost:8000/map/all?west=${bbox[0]}&south=${bbox[1]}&east=${bbox[2]}&north=${bbox[3]}`;
+        }
+
+        return `http://localhost:8000/map?west=${bbox[0]}&south=${bbox[1]}&east=${bbox[2]}&north=${bbox[3]}&mode=${mode}`;
     }, [resultData, mode]);
 
     const mapSrc = mapSrcState || defaultMapSrc;
 
     const analyzeMetric = async () => {
-    if (!resultData) return;
-    try {
-        setLoading(true);
+        if (!resultData) return;
+        try {
+            setLoading(true);
 
-        const { bbox } = resultData;
+            const { bbox } = resultData;
 
-        const url = `http://localhost:8000/metrics` +
-                    `?metric=${encodeURIComponent(metric)}` +
-                    `&west=${bbox[0]}` +
-                    `&south=${bbox[1]}` +
-                    `&east=${bbox[2]}` +
-                    `&north=${bbox[3]}` +
-                    `&mode=${encodeURIComponent(mode)}`;
+            const url = `http://localhost:8000/metrics` +
+                `?metric=${encodeURIComponent(metric)}` +
+                `&west=${bbox[0]}` +
+                `&south=${bbox[1]}` +
+                `&east=${bbox[2]}` +
+                `&north=${bbox[3]}` +
+                `&mode=${encodeURIComponent(mode)}`;
 
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Ошибка сервера: ${resp.status}`);
-        const data = await resp.json();
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`Ошибка сервера: ${resp.status}`);
+            const data = await resp.json();
 
-        if (data.status !== "ok") {
-            alert("Анализ не удался: " + (data.message || "unknown"));
+            if (data.status !== "ok") {
+                alert("Анализ не удался: " + (data.message || "unknown"));
+                setLoading(false);
+                return;
+            }
+
+            // Получаем путь к HTML-карте анализа
+            const analysisMapPath = data.map_path;
+            const fullUrl = analysisMapPath.startsWith("http")
+                ? analysisMapPath
+                : `http://localhost:8000/${analysisMapPath.replace(/^\/+/, "")}`;
+
+            setMapSrcState(fullUrl);
+            setMapKey(Date.now());  // обновляем iframe
+        } catch (err) {
+            console.error(err);
+            alert("Ошибка при анализе метрики! " + (err.message || ""));
             setLoading(false);
-            return;
         }
-
-        // Получаем путь к HTML-карте анализа
-        const analysisMapPath = data.map_path;
-        const fullUrl = analysisMapPath.startsWith("http")
-            ? analysisMapPath
-            : `http://localhost:8000/${analysisMapPath.replace(/^\/+/, "")}`;
-
-        setMapSrcState(fullUrl);
-        setMapKey(Date.now());  // обновляем iframe
-    } catch (err) {
-        console.error(err);
-        alert("Ошибка при анализе метрики! " + (err.message || ""));
-        setLoading(false);
-    }
-};
+    };
 
     const sidebarContent = (
         <>
@@ -95,6 +93,7 @@ export default function ResultPage() {
                             <option value="aero">Авиационный</option>
                             <option value="sea">Морской</option>
                             <option value="rail">Железнодорожный</option>
+                            <option value="all">Все режимы</option>
                         </select>
                     </div>
 
@@ -108,25 +107,32 @@ export default function ResultPage() {
                                         value={m}
                                         checked={metric === m}
                                         onChange={(e) => setMetric(e.target.value)}
+                                        disabled={mode === "all"}
                                     />
                                     {" "}{m}
                                 </label>
-                        ))}
-                        <button
-                            onClick={analyzeMetric}
-                            style={{
-                                marginTop: "10px",
-                                width: "100%",
-                                padding: "8px",
-                                borderRadius: "6px",
-                                backgroundColor: "#0f62fe",
-                                color: "white",
-                                border: "none",
-                                cursor: "pointer"
-                            }}
-                        >
-                            Анализ метрики
-                        </button>
+                            ))}
+                        {mode !== "all" ? (
+                            <button
+                                onClick={analyzeMetric}
+                                style={{
+                                    marginTop: "10px",
+                                    width: "100%",
+                                    padding: "8px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#0f62fe",
+                                    color: "white",
+                                    border: "none",
+                                    cursor: "pointer"
+                                }}
+                            >
+                                Анализ метрики
+                            </button>
+                        ) : (
+                            <p style={{ fontSize: "14px", color: "#666", marginTop: "10px" }}>
+                                Метрики недоступны для отображения всех режимов одновременно.
+                            </p>
+                        )}
                     </div>
                 </>
             ) : (

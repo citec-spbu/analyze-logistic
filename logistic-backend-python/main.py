@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 from models.schemas import MSTResponse
-from services.logistics import generate_logistics_mst,  analyze_logistics_metrics
+from services.logistics import generate_logistics_mst,  analyze_logistics_metrics, generate_all_modes_mst
 from services.logistics import compute_metric
 import os
 
@@ -66,6 +66,25 @@ def analyze_logistics_network(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/map/all", response_class=HTMLResponse, tags=["Visualization"])
+def get_map_all(
+        west: float = Query(DEFAULT_BBOX[0]),
+        south: float = Query(DEFAULT_BBOX[1]),
+        east: float = Query(DEFAULT_BBOX[2]),
+        north: float = Query(DEFAULT_BBOX[3]),
+):
+    """
+    Получить карту MST для всех модов одновременно
+    """
+    bbox = (west, south, east, north)
+    try:
+        html_path = generate_all_modes_mst(bbox, cache_dir="cache")
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/map", response_class=HTMLResponse, tags=["Visualization"])
 def get_map(
         west: float = Query(DEFAULT_BBOX[0], description="Западная долгота"),
@@ -76,8 +95,6 @@ def get_map(
 ):
     """
     Получить HTML карту с визуализацией MST
-
-    Возвращает интерактивную карту Folium
     """
     bbox = (west, south, east, north)
     try:
