@@ -20,17 +20,17 @@ from scgraph.geographs.marnet import marnet_geograph
 
 def get_color(mode="auto"):
     if mode == "auto":
-        return "#4B4B4B"
+        return "#D62828"  # ярко-красный, хорошо виден на зелени и воде
     elif mode == "rail":
-        return "#6B3FA0"
+        return "#5E60CE"  # глубокий фиолетово-синий, контрастен к фону
     elif mode == "sea":
-        return "#2F4F4F"
+        return "#0077B6"  # тёмно-синий, выделяется на светлом море
     elif mode == "aero":
-        return "#708090"
+        return "#009E73"  # насыщенно-зелёный, хорошо виден на сером фоне
     elif mode == "support":
-        return "#8B6D5C"
+        return "#FFB703"  # тёплый жёлто-оранжевый, заметен на карте
     else:
-        return "#7A7A7A"
+        return "#6C757D"  # нейтрально-серый для прочих элементов
 
 def get_default_tags(mode: str) -> Dict[str, list]:
     """Возвращает набор OSM-тегов для логистических объектов по модам"""
@@ -45,7 +45,7 @@ def get_default_tags(mode: str) -> Dict[str, list]:
         return {"railway": ["station", "yard", "cargo_terminal"]}
     else:
         raise ValueError(f"Неизвестный мод: {mode}")
-    
+
 def clear_cache_contents():
     if os.path.exists("cache"):
         for filename in os.listdir("cache"):
@@ -283,7 +283,8 @@ def draw_mst_layer(m, coords_df, mst, bbox, mode):
     for u, v, data in mst.edges(data=True):
         ru, rv = coords_df.loc[u], coords_df.loc[v]
 
-        # AUTO с OSMnx
+        color = get_color(mode)
+        weight = 3
         if mode == "auto" and G_drive is not None:
             try:
                 route = ox.routing.shortest_path(G_drive, ru["osm_node"], rv["osm_node"], weight="length")
@@ -291,23 +292,16 @@ def draw_mst_layer(m, coords_df, mst, bbox, mode):
                 dist_km = route_gdf["length"].sum() / 1000
             except Exception:
                 dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
-            color = get_color(mode)
-            weight = 3
         # RAIL
         elif mode == "all":
             dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
-            color = data.get("colour") or "gray"
-            weight = 3
             # делаем межмодовые линии заметнее
 
         elif mode == "rail":
             dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
-            color = data.get("colour") or "blue"
-            weight = 3
         # OTHER
         else:
             dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
-            color, weight = "yellow", 3
 
         folium.PolyLine(
             [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
@@ -324,7 +318,6 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
     m = create_base_map(bbox)
     draw_nodes_layer(m, coords_df)
 
-    # --- Режим ALL: рисуем все моды слоями + межмодальные связи ---
     if mode == "all":
         # создадим отдельные слои по mode в coords_df
         modes_present = coords_df["mode"].unique() if "mode" in coords_df else []
@@ -348,15 +341,15 @@ def visualize_mst_map(coords_df, mst, bbox, mode, output_file="logistics_mst.htm
                     ).add_to(fg)
             fg.add_to(m)
 
-        # --- отдельный слой для межмодальных рёбер ---
         intermodal_fg = folium.FeatureGroup(name="Межмодальные соединения", show=True)
         for u, v, data in mst.edges(data=True):
             ru, rv = coords_df.loc[u], coords_df.loc[v]
             if ru["mode"] != rv["mode"]:
                 dist_km = haversine((ru["lat"], ru["lon"]), (rv["lat"], rv["lon"]))
+                color = get_color('support')
                 folium.PolyLine(
                     [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
-                    color="#ff8c00",
+                    color=color,
                     weight=3,
                     opacity=0.9,
                     popup=f"SEMI {dist_km:.2f} км"
@@ -397,26 +390,6 @@ def generate_all_modes_mst(bbox, cache_dir="cache", output_file="logistics_mst_a
     combined_coords_df = pd.concat(all_coords.values(), ignore_index=True) if all_coords else pd.DataFrame()
     draw_nodes_layer(m, combined_coords_df)
 
-    mst_all_path = os.path.join(cache_dir, "mst_all.pkl")
-    if os.path.exists(mst_all_path):
-        with open(mst_all_path, "rb") as f:
-            G_all = pickle.load(f)
-    else:
-        G_all = nx.Graph()
-
-    intermodal_fg = folium.FeatureGroup(name="Межмодальные соединения", show=True)
-    for u, v, data in G_all.edges(data=True):
-        if data.get("colour") == "gray":  # метка межмодальных связей
-            ru, rv = coords_df.loc[u], coords_df.loc[v]
-            folium.PolyLine(
-                [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
-                color="#0000FF",     # ярко-синий
-                weight=6,            # толще остальных
-                opacity=0.9,
-                popup=f"SEMI: {data.get('weight', 0):.2f} км"
-            ).add_to(intermodal_fg)
-    intermodal_fg.add_to(m)
-
     folium.LayerControl(collapsed=False).add_to(m)
     m.get_root().html.add_child(folium.Element("""
     <style>
@@ -445,7 +418,7 @@ def compute_metric(G, metric):
     else:
         raise ValueError(f"Неизвестная метрика: {metric}")
 
-def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_map.html"):
+def visualize_metric_map(coords_df, G, metric_vals, bbox, mode, output_file="metric_map.html"):
     """Строит карту, где вершины окрашены согласно метрике"""
 
     m = folium.Map(
@@ -480,15 +453,16 @@ def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_ma
         g = int(255 * (1 - t))
         return f"#{r:02x}{g:02x}00"
 
-    # Рёбра графа 
+    # Рёбра графа
+    color = get_color(mode)
     for u, v, _ in G.edges(data=True):
         ru = coords_df.loc[u]
         rv = coords_df.loc[v]
 
         folium.PolyLine(
             [(ru["lat"], ru["lon"]), (rv["lat"], rv["lon"])],
-            color="#1F1E1E",
-            weight=1,
+            color=color,
+            weight=3,
             opacity=1
         ).add_to(m)
 
@@ -523,7 +497,6 @@ def visualize_metric_map(coords_df, G, metric_vals, bbox, output_file="metric_ma
 
     m.save(output_file)
     return output_file
-
 
 
 # =====================
@@ -576,11 +549,9 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
                 for u, v, data in mst.edges(data=True):
                     G_all.add_edge(idx_map[u], idx_map[v], **data)
 
-        # Добавляем связи "aero/sea/rail" <-> "auto"
         print("Соединяем узлы aero/rail/sea с ближайшими auto узлами...")
         auto_df = combined_coords[combined_coords["mode"] == "auto"].copy()
 
-        # ✳️ фикс 1 — сбрасываем индекс и сохраняем соответствие с combined_coords
         auto_df = auto_df.reset_index().rename(columns={"index": "global_index"})
 
         if len(auto_df) >= 2:
@@ -600,7 +571,7 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
                 continue
             df = all_coords[m]
 
-            print(f"🔗 Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
+            print(f"Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
 
             for idx, row in df.iterrows():
                 lat, lon = row["lat"], row["lon"]
@@ -646,7 +617,7 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
         if highlight_edges:
             print(f"Добавлено {len(highlight_edges)} межмодальных соединений.")
         else:
-            print("⚠ Межмодальные соединения не найдены!")
+            print("Межмодальные соединения не найдены!")
 
         visualize_mst_map(combined_coords, G_all, bbox, "all", output_file=mst_map_path)
 
@@ -822,7 +793,7 @@ def analyze_logistics_metrics(bbox, mode, metric, cache_dir="cache"):
 
     else:
         # старый случай для одиночных модов
-        visualize_metric_map(coords_df, G, metric_vals, bbox, output_file=metric_map_path)
+        visualize_metric_map(coords_df, G, metric_vals, bbox, mode=mode, output_file=metric_map_path)
 
     metric_vals_clean = {int(k): float(v) for k, v in metric_vals.items()}
 
