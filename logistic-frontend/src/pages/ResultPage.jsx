@@ -107,12 +107,12 @@ export default function ResultPage() {
                                         value={m}
                                         checked={metric === m}
                                         onChange={(e) => setMetric(e.target.value)}
-                                        disabled={mode === "all"}
+                                        disabled={mode === "all1"}
                                     />
                                     {" "}{m}
                                 </label>
                             ))}
-                        {mode !== "all" ? (
+                        {mode !== "all1" ? (
                             <button
                                 onClick={analyzeMetric}
                                 style={{

@@ -101,7 +101,7 @@ export default function AnalysisPage() {
                     Морской
                 </label>
 
-                <label style={{ display: "block" }}>
+                <label style={{ display: "block", marginBottom: "6px"  }}>
                     <input
                         type="radio"
                         name="mode"
@@ -110,6 +110,16 @@ export default function AnalysisPage() {
                         onChange={() => setSelectedMode("rail")}
                     />{" "}
                     Железнодорожный
+                </label>
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                    <input
+                        type="radio"
+                        name="mode"
+                        value="all"
+                        checked={selectedMode === "all"}
+                        onChange={() => setSelectedMode("all")}
+                    />{" "}
+                    Все режимы
                 </label>
             </div>
         </>

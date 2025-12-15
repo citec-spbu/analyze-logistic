@@ -74,14 +74,31 @@ def get_map_all(
         north: float = Query(DEFAULT_BBOX[3]),
 ):
     """
-    Получить карту MST для всех модов одновременно
+    Получить карту MST для всех модов одновременно.
+    Берёт уже сохранённый файл из cache/mst_all.html или cache/logistics_mst_all.html
     """
-    bbox = (west, south, east, north)
     try:
-        html_path = generate_all_modes_mst(bbox, cache_dir="cache")
+        # путей может быть два (в зависимости от вызова функции)
+        possible_paths = [
+            "cache/mst_all.html",
+            "cache/logistics_mst_all.html"
+        ]
+        html_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                html_path = p
+                break
+
+        if not html_path:
+            # если файла нет — построим один раз
+            print("Файл карты для всех модов не найден, создаём...")
+            bbox = (west, south, east, north)
+            html_path = generate_all_modes_mst(bbox, cache_dir="cache")
+
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
         return HTMLResponse(content=html_content)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
