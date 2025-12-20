@@ -36,7 +36,11 @@ def get_default_tags(mode: str) -> Dict[str, list]:
     """Возвращает набор OSM-тегов для логистических объектов по модам"""
     mode = mode.lower()
     if mode == "auto":
-        return {"building": ["warehouse", "depot", "industrial"]}
+        return {"building": ["warehouse", "depot", "industrial"],
+                "aeroway": ["terminal", "hangar", "cargo"],
+                "harbour": True, "man_made": ["pier", "dock"],
+                "railway": ["station", "yard", "cargo_terminal"]
+                }
     elif mode == "aero":
         return {"aeroway": ["terminal", "hangar", "cargo"]}
     elif mode == "sea":
@@ -549,60 +553,61 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
                 for u, v, data in mst.edges(data=True):
                     G_all.add_edge(idx_map[u], idx_map[v], **data)
 
-        print("Соединяем узлы aero/rail/sea с ближайшими auto узлами...")
-        auto_df = combined_coords[combined_coords["mode"] == "auto"].copy()
+        #print("Соединяем узлы aero/rail/sea с ближайшими auto узлами...")
 
-        auto_df = auto_df.reset_index().rename(columns={"index": "global_index"})
-
-        if len(auto_df) >= 2:
-            try:
-                G_drive = ox.graph_from_bbox(bbox, network_type="drive")
-                auto_df["osm_node"] = ox.distance.nearest_nodes(
-                    G_drive, X=auto_df["lon"].values, Y=auto_df["lat"].values
-                )
-            except Exception as e:
-                print(f"Ошибка загрузки дорожного графа: {e}")
-                G_drive = None
-        else:
-            G_drive = None
-
-        for m in ["aero", "rail", "sea"]:
-            if m not in all_coords or all_coords[m].empty:
-                continue
-            df = all_coords[m]
-
-            print(f"Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
-
-            for idx, row in df.iterrows():
-                lat, lon = row["lat"], row["lon"]
-
-                # ищем ближайший авто-пункт
-                auto_dists = auto_df.apply(lambda r: haversine((lat, lon), (r["lat"], r["lon"])), axis=1)
-                nearest_idx = auto_dists.idxmin()
-                nearest_global_auto_idx = int(auto_df.loc[nearest_idx, "global_index"])
-                lat2, lon2 = auto_df.loc[nearest_idx, ["lat", "lon"]]
-                dist_km = haversine((lat, lon), (lat2, lon2))
-
-                # если возможно, уточняем длину по дороге
-                if G_drive is not None:
-                    try:
-                        from_node = ox.distance.nearest_nodes(G_drive, lon, lat)
-                        to_node = auto_df.loc[nearest_idx, "osm_node"]
-                        route = ox.routing.shortest_path(G_drive, from_node, to_node, weight="length")
-                        if route and len(route) > 1:
-                            route_gdf = ox.routing.route_to_gdf(G_drive, route)
-                            dist_km = route_gdf["length"].sum() / 1000
-                    except Exception as e:
-                        print(f"Предупреждение: не удалось рассчитать путь для {m}→auto: {e}")
-
-                # добавляем ребро в объединённый граф
-                idx_all_m = index_map[m][idx]
-                G_all.add_edge(
-                    idx_all_m,
-                    nearest_global_auto_idx,
-                    weight=dist_km,
-                    colour="gray"
-                )
+        # auto_df = combined_coords[combined_coords["mode"] == "auto"].copy()
+        #
+        # auto_df = auto_df.reset_index().rename(columns={"index": "global_index"})
+        #
+        # if len(auto_df) >= 2:
+        #     try:
+        #         G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+        #         auto_df["osm_node"] = ox.distance.nearest_nodes(
+        #             G_drive, X=auto_df["lon"].values, Y=auto_df["lat"].values
+        #         )
+        #     except Exception as e:
+        #         print(f"Ошибка загрузки дорожного графа: {e}")
+        #         G_drive = None
+        # else:
+        #     G_drive = None
+        #
+        # for m in ["aero", "rail", "sea"]:
+        #     if m not in all_coords or all_coords[m].empty:
+        #         continue
+        #     df = all_coords[m]
+        #
+        #     print(f"Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
+        #
+        #     for idx, row in df.iterrows():
+        #         lat, lon = row["lat"], row["lon"]
+        #
+        #         # ищем ближайший авто-пункт
+        #         auto_dists = auto_df.apply(lambda r: haversine((lat, lon), (r["lat"], r["lon"])), axis=1)
+        #         nearest_idx = auto_dists.idxmin()
+        #         nearest_global_auto_idx = int(auto_df.loc[nearest_idx, "global_index"])
+        #         lat2, lon2 = auto_df.loc[nearest_idx, ["lat", "lon"]]
+        #         dist_km = haversine((lat, lon), (lat2, lon2))
+        #
+        #         # если возможно, уточняем длину по дороге
+        #         if G_drive is not None:
+        #             try:
+        #                 from_node = ox.distance.nearest_nodes(G_drive, lon, lat)
+        #                 to_node = auto_df.loc[nearest_idx, "osm_node"]
+        #                 route = ox.routing.shortest_path(G_drive, from_node, to_node, weight="length")
+        #                 if route and len(route) > 1:
+        #                     route_gdf = ox.routing.route_to_gdf(G_drive, route)
+        #                     dist_km = route_gdf["length"].sum() / 1000
+        #             except Exception as e:
+        #                 print(f"Предупреждение: не удалось рассчитать путь для {m}→auto: {e}")
+        #
+        #         # добавляем ребро в объединённый граф
+        #         idx_all_m = index_map[m][idx]
+        #         G_all.add_edge(
+        #             idx_all_m,
+        #             nearest_global_auto_idx,
+        #             weight=dist_km,
+        #             colour="gray"
+        #         )
 
         # сохраняем результаты
         coords_path = os.path.join(cache_dir, "coords_all.pkl")
