@@ -10,13 +10,14 @@ from typing import Tuple, Dict, Any, Optional
 import pickle
 import shutil
 import atexit
+import re
 
 from haversine import haversine, Unit
 from scgraph.geographs.marnet import marnet_geograph
+from shapely.geometry import MultiPolygon
+from shapely.ops import unary_union
+import difflib
 
-# =====================
-#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# =====================
 
 def get_color(mode="auto"):
     if mode == "auto":
@@ -36,10 +37,10 @@ def get_default_tags(mode: str) -> Dict[str, list]:
     """Возвращает набор OSM-тегов для логистических объектов по модам"""
     mode = mode.lower()
     if mode == "auto":
-        return {"building": ["warehouse", "depot", "industrial"],
-                "aeroway": ["terminal", "hangar", "cargo"],
-                "harbour": True, "man_made": ["pier", "dock"],
-                "railway": ["station", "yard", "cargo_terminal"]
+        return {"building": ["warehouse", "depot", "industrial"]
+                # "aeroway": ["terminal", "hangar", "cargo"],
+                # "harbour": True, "man_made": ["pier", "dock"],
+                # "railway": ["station", "yard", "cargo_terminal"]
                 }
     elif mode == "aero":
         return {"aeroway": ["terminal", "hangar", "cargo"]}
@@ -69,6 +70,101 @@ atexit.register(clear_cache_contents)
 #  ОСНОВНЫЕ ФУНКЦИИ
 # =====================
 
+def merge_gdf_geometries(
+    gdf: gpd.GeoDataFrame,
+    buffer_m: float = 150.0,
+    name_merge_radius_km: float = 1.0,
+    name_similarity_threshold: float = 0.8
+) -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gdf
+
+    print(f"Шаг 1: объединяем пересекающиеся объекты (≤{buffer_m} м)...")
+
+    gdf_proj = gdf.to_crs(epsg=3857).copy()
+    gdf_proj["geometry"] = gdf_proj.geometry.buffer(buffer_m)
+    merged_geom = gdf_proj.unary_union
+
+    merged_gdf = gpd.GeoDataFrame(geometry=[merged_geom], crs=3857)
+    merged_gdf = merged_gdf.explode(index_parts=False).reset_index(drop=True)
+    merged_gdf = merged_gdf.to_crs(epsg=4326)
+
+    print(f"После пространственного объединения: {len(merged_gdf)} объектов")
+
+    if "name" in gdf.columns and not gdf["name"].isna().all():
+        print(f"Шаг 2: объединяем по похожим именам (≤{name_merge_radius_km} км, ≥{name_similarity_threshold*100:.0f}% сходства)")
+
+        gdf_named = gdf.dropna(subset=["name"]).copy()
+        if gdf_named.empty:
+            return merged_gdf
+
+        gdf_named_proj = gdf_named.to_crs(epsg=3857)
+        gdf_named["centroid"] = gdf_named_proj.geometry.centroid.to_crs(epsg=4326)
+        gdf_named["lat"] = gdf_named["centroid"].y
+        gdf_named["lon"] = gdf_named["centroid"].x
+
+        def normalize_name(name: str) -> str:
+            if not isinstance(name, str):
+                return ''
+            name = name.lower()
+            name = re.sub(r'\d+', '', name)
+            name = re.sub(r'\b(станция|вокзал|платформа|терминал|аэропорт|порт|железнодорожный|жд|санкт|петербург)\b', '', name)
+            name = re.sub(r'(ский|ская)\b', '', name)
+            name = re.sub(r'[^a-zа-яё0-9]+', ' ', name)
+            return name.strip()
+
+        def are_names_similar(n1: str, n2: str) -> bool:
+            n1n, n2n = normalize_name(n1), normalize_name(n2)
+            if not n1n or not n2n:
+                return False
+            ratio = difflib.SequenceMatcher(None, n1n, n2n).ratio()
+            # print("Обрезанные имена: ", n1n, " | ", n2n, " % совпадения: ", ratio, "объединили: ", ratio >= name_similarity_threshold)
+            return ratio >= name_similarity_threshold
+
+        merged_records = []
+        used = set()
+
+        for i, row_i in gdf_named.iterrows():
+            if i in used:
+                continue
+            cluster = [i]
+            names = [str(row_i["name"])]
+
+            for j, row_j in gdf_named.iterrows():
+                if j == i or j in used:
+                    continue
+                if are_names_similar(row_i["name"], row_j["name"]):
+                    dist_km = haversine(
+                        (row_i["lat"], row_i["lon"]),
+                        (row_j["lat"], row_j["lon"]),
+                        unit=Unit.KILOMETERS
+                    )
+                    if dist_km <= name_merge_radius_km:
+                        cluster.append(j)
+                        names.append(str(row_j["name"]))
+                        used.add(j)
+
+            used.update(cluster)
+            geom_union = unary_union(gdf_named.loc[cluster, "geometry"].tolist())
+            merged_records.append({
+                "name": " + ".join(sorted(set(names))),
+                "geometry": geom_union
+            })
+
+        merged_name_gdf = (
+            gpd.GeoDataFrame(merged_records, crs=gdf.crs)
+            .reset_index(drop=True)
+        )
+
+        if len(merged_name_gdf) > 0:
+            merged_gdf = merged_name_gdf
+
+        print(f"После объединения по именам: {len(merged_gdf)} объектов")
+
+    else:
+        print("В данных отсутствует столбец 'name' — пропускаем объединение по именам.")
+
+    return merged_gdf
 def load_logistics_features(
         bbox: Tuple[float, float, float, float],
         mode: str = "auto",
@@ -105,19 +201,45 @@ def clean_tags(row_dict):
     return clean
 
 def extract_coordinates(gdf: gpd.GeoDataFrame) -> pd.DataFrame:
-    """Извлекает координаты центроидов логистических объектов"""
+    if gdf.empty:
+        return pd.DataFrame(columns=["lat", "lon", "tags"])
+
+    # приводим к корректной CRS, если crs не указан
+    if gdf.crs is None:
+        gdf = gdf.set_crs(epsg=4326)
+
+    # вычисляем центроиды безопасно в метрической проекции
+    try:
+        gdf_proj = gdf.to_crs(epsg=3857)
+        centroids_proj = gdf_proj.geometry.centroid
+        centroids = centroids_proj.to_crs(epsg=4326)
+    except Exception:
+        centroids = gdf.geometry.centroid  # fallback
+
     coords = []
-    for _, row in gdf.iterrows():
+    for idx, row in gdf.iterrows():
         geom = row.geometry
-        if geom.geom_type in ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]:
-            y, x = geom.centroid.y, geom.centroid.x
-        else:
-            y, x = geom.y, geom.x
+        if geom is None or geom.is_empty:
+            continue
+
+        try:
+            centroid = centroids.iloc[idx]
+            y, x = centroid.y, centroid.x
+        except Exception:
+            # fallback если centroid не подошёл
+            if hasattr(geom, "centroid"):
+                y, x = geom.centroid.y, geom.centroid.x
+            elif hasattr(geom, "y") and hasattr(geom, "x"):
+                y, x = geom.y, geom.x
+            else:
+                continue
+
         coords.append({
             "lat": float(y),
             "lon": float(x),
             "tags": clean_tags(row.to_dict())
         })
+
     return pd.DataFrame(coords)
 
 
@@ -553,61 +675,61 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
                 for u, v, data in mst.edges(data=True):
                     G_all.add_edge(idx_map[u], idx_map[v], **data)
 
-        #print("Соединяем узлы aero/rail/sea с ближайшими auto узлами...")
+        print("Соединяем узлы aero/rail/sea с ближайшими auto узлами...")
 
-        # auto_df = combined_coords[combined_coords["mode"] == "auto"].copy()
-        #
-        # auto_df = auto_df.reset_index().rename(columns={"index": "global_index"})
-        #
-        # if len(auto_df) >= 2:
-        #     try:
-        #         G_drive = ox.graph_from_bbox(bbox, network_type="drive")
-        #         auto_df["osm_node"] = ox.distance.nearest_nodes(
-        #             G_drive, X=auto_df["lon"].values, Y=auto_df["lat"].values
-        #         )
-        #     except Exception as e:
-        #         print(f"Ошибка загрузки дорожного графа: {e}")
-        #         G_drive = None
-        # else:
-        #     G_drive = None
-        #
-        # for m in ["aero", "rail", "sea"]:
-        #     if m not in all_coords or all_coords[m].empty:
-        #         continue
-        #     df = all_coords[m]
-        #
-        #     print(f"Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
-        #
-        #     for idx, row in df.iterrows():
-        #         lat, lon = row["lat"], row["lon"]
-        #
-        #         # ищем ближайший авто-пункт
-        #         auto_dists = auto_df.apply(lambda r: haversine((lat, lon), (r["lat"], r["lon"])), axis=1)
-        #         nearest_idx = auto_dists.idxmin()
-        #         nearest_global_auto_idx = int(auto_df.loc[nearest_idx, "global_index"])
-        #         lat2, lon2 = auto_df.loc[nearest_idx, ["lat", "lon"]]
-        #         dist_km = haversine((lat, lon), (lat2, lon2))
-        #
-        #         # если возможно, уточняем длину по дороге
-        #         if G_drive is not None:
-        #             try:
-        #                 from_node = ox.distance.nearest_nodes(G_drive, lon, lat)
-        #                 to_node = auto_df.loc[nearest_idx, "osm_node"]
-        #                 route = ox.routing.shortest_path(G_drive, from_node, to_node, weight="length")
-        #                 if route and len(route) > 1:
-        #                     route_gdf = ox.routing.route_to_gdf(G_drive, route)
-        #                     dist_km = route_gdf["length"].sum() / 1000
-        #             except Exception as e:
-        #                 print(f"Предупреждение: не удалось рассчитать путь для {m}→auto: {e}")
-        #
-        #         # добавляем ребро в объединённый граф
-        #         idx_all_m = index_map[m][idx]
-        #         G_all.add_edge(
-        #             idx_all_m,
-        #             nearest_global_auto_idx,
-        #             weight=dist_km,
-        #             colour="gray"
-        #         )
+        auto_df = combined_coords[combined_coords["mode"] == "auto"].copy()
+
+        auto_df = auto_df.reset_index().rename(columns={"index": "global_index"})
+
+        if len(auto_df) >= 2:
+            try:
+                G_drive = ox.graph_from_bbox(bbox, network_type="drive")
+                auto_df["osm_node"] = ox.distance.nearest_nodes(
+                    G_drive, X=auto_df["lon"].values, Y=auto_df["lat"].values
+                )
+            except Exception as e:
+                print(f"Ошибка загрузки дорожного графа: {e}")
+                G_drive = None
+        else:
+            G_drive = None
+
+        for m in ["aero", "rail", "sea"]:
+            if m not in all_coords or all_coords[m].empty:
+                continue
+            df = all_coords[m]
+
+            print(f"Соединяем все узлы '{m}' с ближайшими 'auto' по автодорогам...")
+
+            for idx, row in df.iterrows():
+                lat, lon = row["lat"], row["lon"]
+
+                # ищем ближайший авто-пункт
+                auto_dists = auto_df.apply(lambda r: haversine((lat, lon), (r["lat"], r["lon"])), axis=1)
+                nearest_idx = auto_dists.idxmin()
+                nearest_global_auto_idx = int(auto_df.loc[nearest_idx, "global_index"])
+                lat2, lon2 = auto_df.loc[nearest_idx, ["lat", "lon"]]
+                dist_km = haversine((lat, lon), (lat2, lon2))
+
+                # если возможно, уточняем длину по дороге
+                if G_drive is not None:
+                    try:
+                        from_node = ox.distance.nearest_nodes(G_drive, lon, lat)
+                        to_node = auto_df.loc[nearest_idx, "osm_node"]
+                        route = ox.routing.shortest_path(G_drive, from_node, to_node, weight="length")
+                        if route and len(route) > 1:
+                            route_gdf = ox.routing.route_to_gdf(G_drive, route)
+                            dist_km = route_gdf["length"].sum() / 1000
+                    except Exception as e:
+                        print(f"Предупреждение: не удалось рассчитать путь для {m}→auto: {e}")
+
+                # добавляем ребро в объединённый граф
+                idx_all_m = index_map[m][idx]
+                G_all.add_edge(
+                    idx_all_m,
+                    nearest_global_auto_idx,
+                    weight=dist_km,
+                    colour="gray"
+                )
 
         # сохраняем результаты
         coords_path = os.path.join(cache_dir, "coords_all.pkl")
@@ -661,6 +783,12 @@ def generate_logistics_mst(bbox, mode="auto", cache_dir="cache", output_file=Non
         except Exception as e:
             print(f"Ошибка загрузки OSM для {mode}: {e}")
             gdf = gpd.GeoDataFrame(columns=["geometry", "tags"])
+
+        try:
+            radius = 1
+            gdf = merge_gdf_geometries(gdf, buffer_m=radius)
+        except Exception as e:
+            print(f"Ошибка при объединении геометрий: {e}")
 
         if gdf.empty or len(gdf) < 2:
             print(f"Недостаточно объектов для {mode}, строим MST с фиктивными точками (0 точек → пустой MST)")
