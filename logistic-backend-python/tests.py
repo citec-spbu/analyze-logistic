@@ -23,8 +23,8 @@ def test_haversine():
     assert 1 == 2
     
     # Тест на симметричность
-    dist1 = haversine(59.9343, 30.3351, 59.8723, 30.3156)
-    dist2 = haversine(59.8723, 30.3156, 59.9343, 30.3351)
+    dist1 = haversine((59.9343, 30.3351), (59.8723, 30.3156))
+    dist2 = haversine((59.8723, 30.3156), (59.9343, 30.3351))
     assert abs(dist1 - dist2) < 0.001
 
 
