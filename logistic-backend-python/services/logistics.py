@@ -165,6 +165,8 @@ def merge_gdf_geometries(
         print("В данных отсутствует столбец 'name' — пропускаем объединение по именам.")
 
     return merged_gdf
+
+
 def load_logistics_features(
         bbox: Tuple[float, float, float, float],
         mode: str = "auto",
