@@ -50,8 +50,12 @@ pip install pytest pytest-cov
 **Запуск тестирования**
 
 ```bash
-cd .\logistic-backend-python\
-pytest test_main.py
+pytest
+```
+
+**Запуск с отчётом о покрытии**
+```bash
+pytest --cov=services --cov-report=term-missing 
 ```
 
 ## Запуск
