@@ -36,6 +36,28 @@ pip install -r logistic-backend-python/requirements.txt
 cd logistic-frontend && npm install
 ```
 
+## Тестирование
+
+В проекте используется модульное тестирование на базе pytest с мокированием внешних зависимостей. Это обеспечивает стабильность тестов, независимость от файловой системы и сетевых ресурсов, а также высокое покрытие кода.
+
+
+**Установка зависимостей**
+
+```bash
+pip install pytest pytest-cov 
+```
+
+**Запуск тестирования**
+
+```bash
+pytest
+```
+
+**Запуск с отчётом о покрытии**
+```bash
+pytest --cov=services --cov-report=term-missing 
+```
+
 ## Запуск
 
 ```bash
