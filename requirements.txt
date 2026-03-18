@@ -13,6 +13,12 @@ scikit-learn==1.4.2
 haversine==2.5
 scgraph==2.10.0
 pytest
-path.py>=11.5.0
-httpx
-fastapi
+path.py>=11.5.0 
+
+fastapi==0.104.1
+starlette==0.27.0
+httpx>=0.25.0,<0.28.0         
+uvicorn==0.24.0
+python-multipart==0.0.6        
+pydantic==2.12.5
+pydantic-settings==2.7.0
