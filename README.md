@@ -1,5 +1,9 @@
 # Сервис по анализу регионально-транспортной логистической системы
 
+![Coverage](https://citec-spbu.github.io/analyze-logistic/badges/coverage.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Веб-приложение для анализа регионально-транспортной логистической инфраструктуры. Позволяет получать объекты логистики из OpenStreetMap по заданной области, строить минимальное остовное дерево (MST) связей между ними и рассчитывать ключевые графовые метрики.
 
 ## Возможности
