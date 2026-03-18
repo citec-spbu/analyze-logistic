@@ -1,6 +1,7 @@
 # Сервис по анализу регионально-транспортной логистической системы
 
-![Coverage](https://citec-spbu.github.io/analyze-logistic/badges/coverage.svg)
+
+[![cov](https://citec-spbu.github.io/analyze-logistic/badges/coverage.svg)](https://github.com/citec-spbu/analyze-logistic/actions)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
